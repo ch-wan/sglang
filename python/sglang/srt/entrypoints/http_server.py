@@ -27,6 +27,8 @@ import time
 from http import HTTPStatus
 from typing import AsyncIterator, Dict, Optional
 
+from sglang.srt.orchestration.std.launcher import launch
+
 # Fix a bug of Python threading
 setattr(threading, "_register_atexit", lambda *args, **kwargs: None)
 
@@ -38,7 +40,6 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response, StreamingResponse
 
-from sglang.srt.entrypoints.engine import _launch_subprocesses
 from sglang.srt.function_call_parser import FunctionCallParser
 from sglang.srt.managers.io_struct import (
     CloseSessionReqInput,
@@ -68,6 +69,7 @@ from sglang.srt.openai_api.adapter import (
     v1_retrieve_file_content,
 )
 from sglang.srt.openai_api.protocol import ModelCard, ModelList
+from sglang.srt.orchestration.std.launcher import launch
 from sglang.srt.orchestration.std.orchestrator import StdOrchestrator
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import (
@@ -498,7 +500,7 @@ def launch_server(
     1. The HTTP server, Engine, and StdOrchestrator both run in the main process.
     2. Inter-process communication is done through ICP (each process uses a different port) via the ZMQ library.
     """
-    orchestrator, scheduler_info = _launch_subprocesses(server_args=server_args)
+    orchestrator, scheduler_info = launch(server_args=server_args)
     set_global_state(
         _GlobalState(
             orchestrator=orchestrator,
