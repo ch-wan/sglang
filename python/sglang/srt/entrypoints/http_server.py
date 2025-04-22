@@ -25,10 +25,11 @@ import multiprocessing as multiprocessing
 import os
 import threading
 import time
-from ast import Mult
+import traceback
 from http import HTTPStatus
-from typing import AsyncIterator, Callable, Dict, Optional, Union
+from typing import AsyncIterator, Callable, Dict, Optional
 
+from sglang.srt.distributed import get_tensor_model_parallel_rank
 from sglang.srt.model_executor.model_runner import LocalSerializedTensor
 
 # Fix a bug of Python threading
@@ -62,6 +63,7 @@ from sglang.srt.managers.io_struct import (
     ResumeMemoryOccupationReqInput,
     SeparateReasoningReqInput,
     SetInternalStateReq,
+    SlowDownReqInput,
     UpdateWeightFromDiskReqInput,
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
@@ -85,7 +87,6 @@ from sglang.srt.openai_api.protocol import ModelCard, ModelList
 from sglang.srt.reasoning_parser import ReasoningParser
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import (
-    MultiprocessingSerializer,
     add_api_key_middleware,
     add_prometheus_middleware,
     delete_directory,
@@ -495,6 +496,18 @@ async def resume_memory_occupation(
     try:
         await _global_state.tokenizer_manager.resume_memory_occupation(obj, request)
     except Exception as e:
+        return _create_error_response(e)
+
+
+@app.api_route("/slow_down", methods=["GET", "POST"])
+async def slow_down(obj: SlowDownReqInput, request: Request):
+    try:
+        print(f"hi [http] slow_down START", flush=True)
+        await _global_state.tokenizer_manager.slow_down(obj, request)
+        print(f"hi [http] slow_down END", flush=True)
+    except Exception as e:
+        print(f"hi [http] has error", flush=True)
+        traceback.print_exc()
         return _create_error_response(e)
 
 

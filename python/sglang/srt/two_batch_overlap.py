@@ -29,18 +29,14 @@ def compute_split_seq_index(
 ) -> Optional[int]:
     if forward_mode.is_extend():
         assert extend_lens is not None
-        split_seq_index = _split_array_by_half_sum(extend_lens)
-        num_seqs = len(extend_lens)
+        return _split_array_by_half_sum(extend_lens)
     elif forward_mode.is_decode():
-        split_seq_index = num_tokens // 2
-        num_seqs = num_tokens
+        return num_tokens // 2
+    elif forward_mode.is_idle():
+        assert num_tokens == 0
+        return 0
     else:
         raise NotImplementedError
-
-    if split_seq_index == 0 or split_seq_index == num_seqs:
-        return None
-
-    return split_seq_index
 
 
 def _split_array_by_half_sum(arr: Sequence[int]) -> int:
@@ -64,6 +60,9 @@ def compute_split_token_index(
         return sum(extend_seq_lens[:split_seq_index])
     elif forward_mode.is_decode():
         return split_seq_index
+    elif forward_mode.is_idle():
+        assert split_seq_index == 0
+        return 0
     else:
         raise NotImplementedError
 
@@ -100,7 +99,7 @@ def _model_forward_filter_inputs(
     token_slice = slice(*output_forward_batch.tbo_parent_token_range)
     return dict(
         hidden_states=hidden_states[token_slice],
-        residual=residual[token_slice],
+        residual=None if residual is None else residual[token_slice],
         positions=positions[token_slice],
         forward_batch=output_forward_batch,
         tbo_subbatch_index=tbo_subbatch_index,
@@ -109,7 +108,12 @@ def _model_forward_filter_inputs(
 
 def model_forward_merge_outputs(output_a, output_b):
     def _handle_key(name):
-        return torch.concat([output_a[name], output_b[name]], dim=0)
+        value_a = output_a[name]
+        value_b = output_b[name]
+        assert (value_a is None) == (value_b is None)
+        if value_a is None:
+            return None
+        return torch.concat([value_a, value_b], dim=0)
 
     return _handle_key("hidden_states"), _handle_key("residual")
 
@@ -135,13 +139,12 @@ Stage = List[ExecutionOperation]
 
 
 def model_forward_execute_two_batch(
-    inputs,
+    inputs_a,
+    inputs_b,
     operations_a: List[Operation],
     operations_b: List[Operation],
     delta_stages: int,
 ):
-    splitted_inputs = model_forward_split_inputs(**inputs)
-    inputs_a, inputs_b = splitted_inputs
     output_a, output_b = _execute_two_batch_raw(
         inputs_a, inputs_b, operations_a, operations_b, delta_stages=delta_stages
     )
@@ -232,11 +235,22 @@ class _StateDict:
     def __getattr__(self, item):
         return self._data[item]
 
+    def __delattr__(self, item):
+        del self._data[item]
+
+    def pop(self, item):
+        return self._data.pop(item)
+
     def update(self, values: Dict[str, Any]):
         for k, v in values.items():
             setattr(self, k, v)
 
-    def clear(self):
+    def clear(self, expect_keys: Sequence[str]):
+        if set(self._data.keys()) != set(expect_keys):
+            raise Exception(
+                f"Unexpected keys when clearning. This may indicate you do not release memory early enough but leave it to here. {list(self._data.keys())=} {expect_keys=}"
+            )
+
         self._data.clear()
 
 

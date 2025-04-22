@@ -86,7 +86,6 @@ global_server_args_dict = {
     "ep_dispatch_algorithm": ServerArgs.ep_dispatch_algorithm,
     "chunked_prefill_size": ServerArgs.chunked_prefill_size,
     "n_share_experts_fusion": ServerArgs.n_share_experts_fusion,
-    "disable_shared_experts_fusion": ServerArgs.disable_shared_experts_fusion,
     "ep_num_redundant_experts": ServerArgs.ep_num_redundant_experts,
     "disable_chunked_prefix_cache": ServerArgs.disable_chunked_prefix_cache,
 }
@@ -559,6 +558,11 @@ class Req:
         # The first output_id transferred from prefill instance.
         self.transferred_output_id: Optional[int] = None
 
+        # For overlap schedule, we delay the kv transfer until `process_batch_result_disagg_prefill` rather than `process_prefill_chunk` in non-overlap
+        # This is because kv is not ready in `process_prefill_chunk`.
+        # We use `tmp_end_idx` to store the end index of the kv cache to send.
+        self.tmp_end_idx: int = -1
+
     @property
     def seqlen(self):
         return len(self.origin_input_ids) + len(self.output_ids)
@@ -591,6 +595,14 @@ class Req:
                 self.prefix_indices, self.last_node = tree_cache.match_prefix(
                     rid=self.rid, key=self.adjust_max_prefix_ids()
                 )
+        elif enable_hierarchical_cache:
+            # in case last_node is evicted during scheduling, we need to update the prefix_indices
+            while self.last_node.evicted:
+                self.prefix_indices = self.prefix_indices[
+                    : -len(self.last_node.host_value)
+                ]
+                self.last_node = self.last_node.parent
+
         self.extend_input_len = len(self.fill_ids) - len(self.prefix_indices)
 
     def adjust_max_prefix_ids(self):
@@ -734,6 +746,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     global_num_tokens_for_logprob: Optional[List[int]] = None
     tbo_split_seq_index: Optional[int] = None
     can_run_dp_cuda_graph: bool = False
+    global_forward_mode: Optional[ForwardMode] = None
 
     # For processing logprobs
     return_logprob: bool = False
@@ -1502,6 +1515,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             )
             or global_server_args_dict["attention_backend"] == "flashmla"
             or global_server_args_dict["attention_backend"] == "fa3"
+            or global_server_args_dict["enable_two_batch_overlap"]
         ):
             seq_lens_cpu = self.seq_lens.cpu()
         else:
@@ -1530,6 +1544,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             global_num_tokens_for_logprob=self.global_num_tokens_for_logprob,
             tbo_split_seq_index=self.tbo_split_seq_index,
             can_run_dp_cuda_graph=self.can_run_dp_cuda_graph,
+            global_forward_mode=self.global_forward_mode,
             seq_lens_cpu=seq_lens_cpu,
             extend_num_tokens=self.extend_num_tokens,
             extend_seq_lens=extend_seq_lens,
@@ -1608,6 +1623,7 @@ class ModelWorkerBatch:
     global_num_tokens_for_logprob: Optional[List[int]]
     tbo_split_seq_index: Optional[int]
     can_run_dp_cuda_graph: bool
+    global_forward_mode: Optional[ForwardMode]
 
     # For extend
     extend_num_tokens: Optional[int]

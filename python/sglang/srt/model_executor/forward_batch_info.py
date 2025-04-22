@@ -246,6 +246,7 @@ class ForwardBatch:
     gathered_buffer: Optional[torch.Tensor] = None
     tbo_split_seq_index: Optional[int] = None
     can_run_dp_cuda_graph: bool = False
+    global_forward_mode: Optional[ForwardMode] = None
 
     # Speculative decoding
     spec_info: Optional[Union[EagleVerifyInput, EagleDraftInput]] = None
@@ -291,6 +292,7 @@ class ForwardBatch:
             token_ids_logprobs=batch.token_ids_logprobs,
             tbo_split_seq_index=batch.tbo_split_seq_index,
             can_run_dp_cuda_graph=batch.can_run_dp_cuda_graph,
+            global_forward_mode=batch.global_forward_mode,
             lora_paths=batch.lora_paths,
             sampling_info=batch.sampling_info,
             req_to_token_pool=model_runner.req_to_token_pool,
@@ -323,6 +325,7 @@ class ForwardBatch:
             )
         if ret.forward_mode.is_idle():
             ret.positions = torch.empty((0,), device=device)
+            ret.prepare_tbo()
             return ret
 
         # Override the positions with spec_info
@@ -648,7 +651,7 @@ class ForwardBatch:
         tbo_split_token_index = two_batch_overlap.compute_split_token_index(
             split_seq_index=self.tbo_split_seq_index,
             forward_mode=self.forward_mode,
-            extend_seq_lens=self.extend_seq_lens,
+            extend_seq_lens=self.extend_seq_lens_cpu,
         )
 
         from sglang.srt.layers.attention.tbo_backend import TboAttnBackend
@@ -725,6 +728,7 @@ class ForwardBatch:
             "req_to_token_pool",
             "token_to_kv_pool",
             "can_run_dp_cuda_graph",
+            "global_forward_mode",
             "spec_info",
             "spec_algorithm",
             "capture_hidden_mode",
@@ -741,10 +745,27 @@ class ForwardBatch:
             output_dict["input_ids"], output_dict["forward_mode"]
         )
 
+        # TODO improve, e.g. unify w/ `init_raw`
+        from sglang.srt.managers.schedule_batch import global_server_args_dict
+
+        if global_server_args_dict["moe_dense_tp_size"] == 1:
+            sum_len = end_token_index - start_token_index
+            gathered_buffer = torch.zeros(
+                (sum_len, self.gathered_buffer.shape[1]),
+                dtype=self.gathered_buffer.dtype,
+                device=self.gathered_buffer.device,
+            )
+        else:
+            gathered_buffer = None
+
         output_dict.update(
             dict(
                 batch_size=end_seq_index - start_seq_index,
-                seq_lens_sum=output_dict["seq_lens"].sum().item(),
+                seq_lens_sum=(
+                    output_dict["seq_lens_cpu"].sum()
+                    if "seq_lens_cpu" in output_dict
+                    else None
+                ),
                 extend_num_tokens=extend_num_tokens,
                 attn_backend=output_attn_backend,
                 tbo_split_seq_index=None,
@@ -752,7 +773,7 @@ class ForwardBatch:
                 tbo_children=None,
                 global_num_tokens_gpu=None,
                 global_num_tokens_cpu=None,
-                gathered_buffer=None,
+                gathered_buffer=gathered_buffer,
                 global_num_tokens_for_logprob_gpu=None,
                 global_num_tokens_for_logprob_cpu=None,
                 sampling_info=None,
@@ -784,7 +805,7 @@ class ForwardBatch:
 def _compute_extend_num_tokens(input_ids, forward_mode: ForwardMode):
     if forward_mode.is_extend():
         return input_ids.shape[0]
-    elif forward_mode.is_decode():
+    elif forward_mode.is_decode() or forward_mode.is_idle():
         return None
     raise NotImplementedError
 

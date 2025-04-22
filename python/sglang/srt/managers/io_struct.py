@@ -400,11 +400,14 @@ class GenerateReqInput:
                 else None
             ),
             return_hidden_states=self.return_hidden_states,
-            bootstrap_host=self.bootstrap_host,
+            bootstrap_host=(
+                self.bootstrap_host[i] if self.bootstrap_host is not None else None
+            ),
             bootstrap_room=(
-                self.bootstrap_room + i if self.bootstrap_room is not None else None
+                self.bootstrap_room[i] if self.bootstrap_room is not None else None
             ),
         )
+
 
 @dataclass
 class TokenizedGenerateReqInput:
@@ -797,6 +800,16 @@ class ResumeMemoryOccupationReqInput:
 
 @dataclass
 class ResumeMemoryOccupationReqOutput:
+    pass
+
+
+@dataclass
+class SlowDownReqInput:
+    forward_sleep_time: Optional[float]
+
+
+@dataclass
+class SlowDownReqOutput:
     pass
 
 

@@ -13,10 +13,16 @@ import torch
 from tqdm.auto import tqdm
 
 from sglang.srt.managers import deepseek_eplb
+from sglang.srt.managers.expert_distribution import (
+    compute_gpu_physical_count,
+    compute_utilization_rate,
+)
 from sglang.srt.managers.expert_location import (
     ExpertLocationMetadata,
     ModelConfigForExpertLocation,
 )
+
+_ = compute_utilization_rate, compute_gpu_physical_count
 
 
 @dataclass
@@ -287,37 +293,6 @@ def simulate_logical_to_physical(
                 )
 
     return physical_count_of_whatever
-
-
-def compute_gpu_physical_count(
-    physical_count_of_whatever: torch.Tensor,  # (whatever, num_layer, num_physical_expert)
-    num_gpu: int,
-):
-    """output: gpu_physical_count_of_batch (whatever, num_layer, num_gpu)"""
-    return einops.reduce(
-        physical_count_of_whatever,
-        "whatever num_layer (num_gpu num_expert_per_gpu) -> whatever num_layer num_gpu",
-        "sum",
-        num_gpu=num_gpu,
-    )
-
-
-def compute_utilization_rate(
-    gpu_physical_count_of_batch: torch.Tensor,  # (num_batch, num_layer, num_gpu)
-):
-    """output: utilization_rate (num_batch, num_layer)"""
-    gpu_physical_count_of_batch = gpu_physical_count_of_batch.float()
-    max_gpu_physical_count = einops.reduce(
-        gpu_physical_count_of_batch,
-        "num_batch num_layer num_gpu -> num_batch num_layer",
-        "max",
-    )
-    avg_gpu_physical_count = einops.reduce(
-        gpu_physical_count_of_batch,
-        "num_batch num_layer num_gpu -> num_batch num_layer",
-        "mean",
-    )
-    return (avg_gpu_physical_count + 1e-5) / (max_gpu_physical_count + 1e-5)
 
 
 def compute_num_token(whatever_with_num_layer_and_num_expert: torch.Tensor):

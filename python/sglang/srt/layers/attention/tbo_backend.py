@@ -22,7 +22,8 @@ class TboAttnBackend(AttentionBackend):
             for child, forward_batch_child in zip(
                 self.children, forward_batch.tbo_children, strict=True
             ):
-                child.init_forward_metadata(forward_batch=forward_batch_child)
+                if forward_batch_child.batch_size > 0:
+                    child.init_forward_metadata(forward_batch=forward_batch_child)
 
     def init_cuda_graph_state(self, max_bs: int):
         self.primary.init_cuda_graph_state(max_bs=max_bs)
@@ -111,18 +112,23 @@ class TboAttnBackend(AttentionBackend):
         replay_seq_lens_sum: int = None,
         replay_seq_lens_cpu: Optional[torch.Tensor] = None,
     ):
+        from sglang.srt.model_executor.forward_batch_info import ForwardMode
+
         if fn_name == "init_forward_metadata_capture_cuda_graph":
             assert capture_num_tokens == bs, "Only support num_tokens==bs currently"
         num_tokens = bs
 
+        forward_mode_for_tbo_split = (
+            forward_mode if forward_mode != ForwardMode.IDLE else ForwardMode.DECODE
+        )
         tbo_split_seq_index = two_batch_overlap.compute_split_seq_index(
-            forward_mode=forward_mode,
+            forward_mode=forward_mode_for_tbo_split,
             num_tokens=num_tokens,
             extend_lens=None,
         )
         tbo_split_token_index = two_batch_overlap.compute_split_token_index(
             split_seq_index=tbo_split_seq_index,
-            forward_mode=forward_mode,
+            forward_mode=forward_mode_for_tbo_split,
             extend_seq_lens=None,
         )
 
@@ -130,6 +136,10 @@ class TboAttnBackend(AttentionBackend):
         num_tokens_child_right = num_tokens - tbo_split_token_index
         bs_child_left = num_tokens_child_left
         bs_child_right = num_tokens_child_right
+
+        assert (
+            num_tokens_child_left > 0 and num_tokens_child_right > 0
+        ), f"{num_tokens_child_left=} {num_tokens_child_right=} {forward_mode=} {num_tokens=}"
 
         common_pre_split_args = dict(
             fn_name=fn_name,

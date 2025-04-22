@@ -148,6 +148,7 @@ class EPMoE(torch.nn.Module):
         correction_bias: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         activation: str = "silu",
+        routed_scaling_factor: Optional[float] = None,
     ):
         super().__init__()
 
@@ -177,6 +178,7 @@ class EPMoE(torch.nn.Module):
         self.correction_bias = correction_bias
         self.custom_routing_function = custom_routing_function
         self.activation = activation
+        self.routed_scaling_factor = routed_scaling_factor
 
         if quant_config is None:
             self.quant_method: Optional[QuantizeMethodBase] = UnquantizedEPMoEMethod()
@@ -230,6 +232,7 @@ class EPMoE(torch.nn.Module):
             num_expert_group=self.num_expert_group,
             correction_bias=self.correction_bias,
             custom_routing_function=self.custom_routing_function,
+            routed_scaling_factor=self.routed_scaling_factor,
             expert_location_dispatch_info=ExpertLocationDispatchInfo.init_new(
                 ep_rank=self.tp_rank,
                 layer_id=self.layer_id,
@@ -845,6 +848,7 @@ class DeepEPMoE(EPMoE):
         correction_bias: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         activation: str = "silu",
+        routed_scaling_factor: Optional[float] = None,
         deepep_mode: DeepEPMode = DeepEPMode.auto,
     ):
         super().__init__(
@@ -864,6 +868,7 @@ class DeepEPMoE(EPMoE):
             correction_bias,
             custom_routing_function,
             activation,
+            routed_scaling_factor,
         )
         self.deepep_mode = deepep_mode
         if self.deepep_mode.enable_low_latency():
@@ -1027,7 +1032,7 @@ class DeepEPMoE(EPMoE):
         assert self.activation == "silu"
 
         # GroupGemm-0
-        num_groups, m, k = hidden_states_fp8[0].size()
+        num_groups, m, k = hidden_states_fp8[0].shape
         n = self.w13_weight.size(1)
         expected_m = min(expected_m, m)
         gateup_output = torch.empty(
@@ -1035,12 +1040,14 @@ class DeepEPMoE(EPMoE):
         )
         with _ensure_get_col_major_tma_aligned_tensor_noop():
             m_grouped_gemm_fp8_fp8_bf16_nt_masked(
-                hidden_states_fp8,
+                [DisposibleTensor.maybe_unwrap(x) for x in hidden_states_fp8],
                 self.w13_weight_fp8,
                 gateup_output,
                 masked_m,
                 expected_m,
             )
+        DisposibleTensor.maybe_dispose(hidden_states_fp8[0])
+        DisposibleTensor.maybe_dispose(hidden_states_fp8[1])
 
         # Act
         down_input = torch.empty(
@@ -1069,6 +1076,7 @@ class DeepEPMoE(EPMoE):
             scale_block_size,
             masked_m,
         )
+        del gateup_output
 
         # GroupGemm-1
         n = self.w2_weight.size(1)

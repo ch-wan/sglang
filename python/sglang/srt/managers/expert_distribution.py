@@ -2,12 +2,15 @@ import logging
 import os
 import time
 from abc import ABC
+from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
+import einops
 import torch
+import torch.distributed
 
 from sglang.srt.managers.expert_location import ExpertLocationMetadata
 from sglang.srt.server_args import ServerArgs
@@ -28,7 +31,7 @@ class ExpertDistributionRecorder:
         expert_location_metadata: "ExpertLocationMetadata",
         rank: int,
     ):
-        if server_args.enable_expert_distribution_recorder:
+        if server_args.expert_distribution_recorder_mode is not None:
             return _ExpertDistributionRecorderReal(
                 server_args, expert_location_metadata, rank
             )
@@ -69,7 +72,7 @@ class ExpertDistributionRecorder:
 
     def _on_not_implemented(self):
         raise Exception(
-            "Please enable ServerArgs.enable_expert_distribution_recorder to use ExpertDistributionRecorder."
+            "Please set ServerArgs.expert_distribution_recorder_mode to use ExpertDistributionRecorder."
         )
 
 
@@ -90,7 +93,9 @@ class _ExpertDistributionRecorderReal(ExpertDistributionRecorder):
         self._recording = False
         self._current_layer_idx = Withable()
         self._current_debug_name = Withable()
-        self._accumulator = _Accumulator.init_new(expert_location_metadata, rank)
+        self._accumulator = _Accumulator.init_new(
+            server_args, expert_location_metadata, rank
+        )
         self._single_pass_gatherers = {
             k: _SinglePassGatherer.init_new(server_args, expert_location_metadata, rank)
             for k in self._accumulator.get_single_pass_gatherer_keys()
@@ -206,9 +211,13 @@ def set_global_expert_distribution_recorder(value):
 
 
 def postprocess_dumps(
-    dumps: List[Any], expert_location_metadata: "ExpertLocationMetadata"
+    dumps: List[Any],
+    server_args: ServerArgs,
+    expert_location_metadata: "ExpertLocationMetadata",
 ):
-    return _Accumulator.get_class().postprocess_dumps(dumps, expert_location_metadata)
+    return _Accumulator.get_class(server_args).postprocess_dumps(
+        dumps, expert_location_metadata
+    )
 
 
 # --------------------------------------- SinglePassGatherer -----------------------------------------
@@ -263,9 +272,13 @@ class _LayerBasedSinglePassGatherer(_SinglePassGatherer):
         self._objects_of_layer = {}
 
     def _on_layer_data(self, layer_idx: int, objects: List[int]):
-        assert layer_idx not in self._objects_of_layer
         assert 0 <= layer_idx < self._expert_location_metadata.num_layers
-        self._objects_of_layer[layer_idx] = objects
+        if layer_idx in self._objects_of_layer:
+            self._objects_of_layer[layer_idx] = _list_sum(
+                self._objects_of_layer[layer_idx], objects
+            )
+        else:
+            self._objects_of_layer[layer_idx] = objects
 
     def reset(self):
         self._objects_of_layer.clear()
@@ -276,6 +289,10 @@ class _LayerBasedSinglePassGatherer(_SinglePassGatherer):
             for layer_index in range(self._expert_location_metadata.num_layers)
         ]
         return torch.tensor(data)
+
+
+def _list_sum(a: List, b: List) -> List:
+    return [x + y for x, y in zip(a, b, strict=True)]
 
 
 class _SelectExpertsSinglePassGatherer(_LayerBasedSinglePassGatherer):
@@ -374,15 +391,19 @@ _SINGLE_PASS_GATHERER_KEY_PRIMARY = "primary"
 class _Accumulator(ABC):
     @staticmethod
     def init_new(
-        expert_location_metadata: "ExpertLocationMetadata", rank: int
+        server_args: ServerArgs,
+        expert_location_metadata: "ExpertLocationMetadata",
+        rank: int,
     ) -> "_Accumulator":
-        return _Accumulator.get_class()(expert_location_metadata, rank)
+        return _Accumulator.get_class(server_args)(expert_location_metadata, rank)
 
     @staticmethod
-    def get_class() -> Type["_Accumulator"]:
-        if get_bool_env_var("SGLANG_EXPERT_DISTRIBUTION_RECORDER_DETAIL"):
-            return _DetailAccumulator
-        return _StatAccumulator
+    def get_class(server_args: ServerArgs) -> Type["_Accumulator"]:
+        return {
+            "stat": _StatAccumulator,
+            "stat_ut": _StatAndUtilizationRateAccumulator,
+            "detail": _DetailAccumulator,
+        }[server_args.expert_distribution_recorder_mode]
 
     def __init__(self, expert_location_metadata: "ExpertLocationMetadata", rank: int):
         self._expert_location_metadata = expert_location_metadata
@@ -555,3 +576,101 @@ def _convert_global_physical_count_to_logical_count(
         src=global_physical_count,
     )
     return logical_count
+
+
+# TODO use composition instead of inheritance later
+class _StatAndUtilizationRateAccumulator(_StatAccumulator):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        window_sizes = [10, 100, 1000]
+        self._history = _DequeCollection(maxlens=window_sizes)
+        self._rank = torch.distributed.get_rank()
+
+    def append(
+        self,
+        forward_pass_id: int,
+        gatherer_key: str,
+        single_pass_global_physical_count: torch.Tensor,
+    ):
+        super().append(forward_pass_id, gatherer_key, single_pass_global_physical_count)
+        self._append_utilization_rate(
+            forward_pass_id, single_pass_global_physical_count
+        )
+
+    def reset(self):
+        super().reset()
+        self._history.clear()
+
+    def _append_utilization_rate(
+        self, forward_pass_id: int, single_pass_global_physical_count: torch.Tensor
+    ):
+        gpu_physical_count = compute_gpu_physical_count(
+            single_pass_global_physical_count,
+            num_gpu=self._expert_location_metadata.ep_size,
+        )
+        gpu_physical_count = gpu_physical_count.to("cuda")
+        torch.distributed.reduce(
+            gpu_physical_count, dst=0, op=torch.distributed.ReduceOp.SUM
+        )
+
+        if self._rank == 0:
+            utilization_rate_tensor = compute_utilization_rate(gpu_physical_count)
+            utilization_rate = torch.mean(utilization_rate_tensor).item()
+            self._history.append(utilization_rate)
+
+            gpu_physical_count_sum = gpu_physical_count.sum().item()
+
+            logger.info(
+                f"[Expert Utilization Rate] "
+                f"forward_pass_id={forward_pass_id} "
+                f"current_pass_value={utilization_rate:.03f} "
+                f"{''.join(f'last_{size}_value={value:.03f} ' for size, value in self._history.mean().items())} "
+                f"gpu_physical_count_sum={gpu_physical_count_sum}"
+            )
+
+
+class _DequeCollection:
+    def __init__(self, maxlens: List[int]):
+        self._dequeues = [deque(maxlen=maxlen) for maxlen in maxlens]
+
+    def append(self, value):
+        for d in self._dequeues:
+            d.append(value)
+
+    def clear(self):
+        for d in self._dequeues:
+            d.clear()
+
+    def mean(self) -> Dict[int, float]:
+        return {d.maxlen: sum(d) / len(d) for d in self._dequeues}
+
+
+def compute_gpu_physical_count(
+    physical_count_of_whatever: torch.Tensor,  # (..., num_layer, num_physical_expert)
+    num_gpu: int,
+):
+    """output: gpu_physical_count_of_batch (..., num_layer, num_gpu)"""
+    return einops.reduce(
+        physical_count_of_whatever,
+        "... num_layer (num_gpu num_expert_per_gpu) -> ... num_layer num_gpu",
+        "sum",
+        num_gpu=num_gpu,
+    )
+
+
+def compute_utilization_rate(
+    gpu_physical_count_of_batch: torch.Tensor,  # (..., num_layer, num_gpu)
+):
+    """output: utilization_rate (..., num_layer)"""
+    gpu_physical_count_of_batch = gpu_physical_count_of_batch.float()
+    max_gpu_physical_count = einops.reduce(
+        gpu_physical_count_of_batch,
+        "... num_layer num_gpu -> ... num_layer",
+        "max",
+    )
+    avg_gpu_physical_count = einops.reduce(
+        gpu_physical_count_of_batch,
+        "... num_layer num_gpu -> ... num_layer",
+        "mean",
+    )
+    return (avg_gpu_physical_count + 1e-5) / (max_gpu_physical_count + 1e-5)

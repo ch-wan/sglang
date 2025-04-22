@@ -87,6 +87,8 @@ from sglang.srt.managers.io_struct import (
     RpcReqOutput,
     SetInternalStateReq,
     SetInternalStateReqOutput,
+    SlowDownReqInput,
+    SlowDownReqOutput,
     TokenizedEmbeddingReqInput,
     TokenizedGenerateReqInput,
     UpdateExpertLocationReqInput,
@@ -267,6 +269,25 @@ class Scheduler(
         else:
             TpWorkerClass = TpModelWorker
 
+        # ################################################################################
+        # print("HACK!!!! temp start_profile")
+        # # Init profiler
+        # self.torch_profiler = None
+        # self.torch_profiler_output_dir: Optional[str] = None
+        # self.profiler_activities: Optional[List[str]] = None
+        # self.profiler_id: Optional[str] = None
+        # self.profiler_target_forward_ct: Optional[int] = None
+        # self.start_profile(
+        #     output_dir=None,
+        #     num_steps=None,
+        #     activities=["MEM"],
+        #     with_stack=None,
+        #     record_shapes=None,
+        #     profile_id=str(time.time()),
+        # )
+        # ################################################################################
+
+        # try:
         self.tp_worker = TpWorkerClass(
             server_args=server_args,
             expert_location_metadata=expert_location_metadata,
@@ -275,6 +296,14 @@ class Scheduler(
             dp_rank=dp_rank,
             nccl_port=port_args.nccl_port,
         )
+        # except Exception as e:
+        #     print(f"HACK!!!! see error but continue {e=}")
+        #     traceback.print_exc()
+
+        # ################################################################################
+        # print("HACK!!!! temp stop_profile")
+        # self.stop_profile()
+        # ################################################################################
 
         # Launch a draft worker for speculative decoding
         if self.spec_algorithm.is_eagle():
@@ -412,6 +441,8 @@ class Scheduler(
         self.profiler_id: Optional[str] = None
         self.profiler_target_forward_ct: Optional[int] = None
 
+        self.forward_sleep_time = None
+
         # Init metrics stats
         self.init_metrics()
 
@@ -435,6 +466,7 @@ class Scheduler(
                 (GetWeightsByNameReqInput, self.get_weights_by_name),
                 (ReleaseMemoryOccupationReqInput, self.release_memory_occupation),
                 (ResumeMemoryOccupationReqInput, self.resume_memory_occupation),
+                (SlowDownReqInput, self.slow_down),
                 (ProfileReq, self.profile),
                 (GetInternalStateReq, self.get_internal_state),
                 (SetInternalStateReq, self.set_internal_state),
@@ -508,6 +540,8 @@ class Scheduler(
                     tp_cache_group=self.tp_cpu_group,
                     page_size=self.page_size,
                     hicache_ratio=server_args.hicache_ratio,
+                    hicache_size=server_args.hicache_size,
+                    hicache_write_policy=server_args.hicache_write_policy,
                 )
             else:
                 self.tree_cache = RadixCache(
@@ -746,6 +780,13 @@ class Scheduler(
             recv_reqs = work_reqs + control_reqs
         elif self.tp_size != 1:
             recv_reqs = broadcast_pyobj(recv_reqs, self.tp_rank, self.tp_cpu_group)
+
+        # if len(recv_reqs) > 0:
+        #     print(
+        #         f"hi [{get_tensor_model_parallel_rank()}, {self.__class__.__name__}] recv_requests {[type(x) for x in recv_reqs]=}",
+        #         flush=True,
+        #     )
+
         return recv_reqs
 
     def process_input_requests(self, recv_reqs: List):
@@ -1017,6 +1058,8 @@ class Scheduler(
             f"#new-token: {adder.log_input_tokens}, "
             f"#cached-token: {adder.log_hit_tokens}, "
             f"token usage: {num_used / self.max_total_num_tokens:.2f}, "
+            # NOTE MODIFIED
+            f"input throughput (token/s): {self.last_input_throughput:.2f}, "
             f"#running-req: {running_bs}, "
             f"#queue-req: {len(self.waiting_queue)}, "
         )
@@ -1380,6 +1423,10 @@ class Scheduler(
         ):
             self.send_to_tokenizer.send_pyobj(self.stop_profile())
 
+        if self.forward_sleep_time is not None:
+            logger.info(f"Scheduler.run_batch sleep {self.forward_sleep_time}s")
+            time.sleep(self.forward_sleep_time)
+
         # Run forward
         if self.is_generation:
             if self.spec_algorithm.is_none():
@@ -1462,7 +1509,7 @@ class Scheduler(
             local_batch,
             dp_size=self.server_args.dp_size,
             attn_tp_size=self.attn_tp_size,
-            moe_dense_tp_size = self.server_args.moe_dense_tp_size,
+            moe_dense_tp_size=self.server_args.moe_dense_tp_size,
             tp_cpu_group=self.tp_cpu_group,
             get_idle_batch=self.get_idle_batch,
             disable_cuda_graph=self.server_args.disable_cuda_graph,
@@ -1536,8 +1583,8 @@ class Scheduler(
                 and (resolved_deepep_mode == DeepEPMode.low_latency)
             )
         else:
-            local_tbo_split_seq_index = None
-            local_can_run_tbo = False
+            local_tbo_split_seq_index = 0
+            local_can_run_tbo = True
 
         local_info = torch.tensor(
             [
@@ -1546,7 +1593,11 @@ class Scheduler(
                 num_tokens_for_logprob,
                 is_extend_in_batch,
                 local_can_run_tbo,
-                local_batch.forward_mode.value if local_batch is not None else -1,
+                (
+                    local_batch.forward_mode
+                    if local_batch is not None
+                    else ForwardMode.IDLE
+                ).value,
             ],
             dtype=torch.int64,
         )
@@ -1564,12 +1615,21 @@ class Scheduler(
         global_num_tokens_for_logprob = global_info[:, 0, 2].tolist()
         is_extend_in_batch = global_info[:, 0, 3].tolist()
         local_can_run_tbo_aggregated = min(global_info[:, 0, 4].tolist())
-        forward_mode_same = _is_all_same(global_info[:, 0, 5].tolist())
+        forward_modes = global_info[:, 0, 5].tolist()
+
+        converted_forward_modes = [
+            ForwardMode.DECODE.value if x == ForwardMode.IDLE.value else x
+            for x in forward_modes
+        ]
+        forward_mode_agree = _is_all_same(converted_forward_modes)
+        global_forward_mode = (
+            ForwardMode(converted_forward_modes[0]) if forward_mode_agree else None
+        )
 
         can_run_tbo = (
             enable_two_batch_overlap
             and local_can_run_tbo_aggregated
-            and forward_mode_same
+            and forward_mode_agree
         )
 
         if local_batch is None and max(global_num_tokens) > 0:
@@ -1581,9 +1641,14 @@ class Scheduler(
                 local_batch.global_num_tokens_for_logprob = [num_tokens_for_logprob]
             else:
                 local_batch.global_num_tokens = global_num_tokens
-                local_batch.global_num_tokens_for_logprob = global_num_tokens_for_logprob
+                local_batch.global_num_tokens_for_logprob = (
+                    global_num_tokens_for_logprob
+                )
             local_batch.tbo_split_seq_index = (
                 local_tbo_split_seq_index if can_run_tbo else None
+            )
+            local_batch.global_forward_mode = (
+                global_forward_mode if can_run_tbo else None
             )
 
             # Check forward mode for cuda graph
@@ -1874,13 +1939,29 @@ class Scheduler(
         del self.stashed_model_static_state
         return ResumeMemoryOccupationReqOutput()
 
+    def slow_down(self, recv_req: SlowDownReqInput):
+        print(
+            f"hi [{get_tensor_model_parallel_rank()}, {self.__class__.__name__}] slow_down START",
+            flush=True,
+        )
+        t = recv_req.forward_sleep_time
+        if t is not None and t <= 0:
+            t = None
+        self.forward_sleep_time = t
+        print(
+            f"hi [{get_tensor_model_parallel_rank()}, {self.__class__.__name__}] slow_down END",
+            flush=True,
+        )
+        return SlowDownReqOutput()
+
     def profile(self, recv_req: ProfileReq):
         if recv_req.type == ProfileReqType.START_PROFILE:
             return self.start_profile(
                 recv_req.output_dir,
                 recv_req.num_steps,
                 recv_req.activities,
-                False,
+                # NOTE fix
+                recv_req.with_stack,
                 recv_req.record_shapes,
                 recv_req.profile_id,
             )
@@ -1923,6 +2004,7 @@ class Scheduler(
         torchprof_activities = [
             activity_map[a] for a in activities if a in activity_map
         ]
+        print(f"hi {torchprof_activities=}")
 
         if torchprof_activities:
             self.torch_profiler = torch.profiler.profile(
@@ -1958,7 +2040,7 @@ class Scheduler(
             self.torch_profiler.export_chrome_trace(
                 os.path.join(
                     self.torch_profiler_output_dir,
-                    str(time.time()) + f"-TP-{self.tp_rank}" + ".trace.json.gz",
+                    self.profiler_id + f"-TP-{self.tp_rank}" + ".trace.json.gz",
                 )
             )
 
@@ -2094,9 +2176,15 @@ def run_scheduler_process(
             else:
                 scheduler.event_loop_normal()
         elif disaggregation_mode == DisaggregationMode.PREFILL:
-            scheduler.event_loop_normal_disagg_prefill()
+            if scheduler.enable_overlap:
+                scheduler.event_loop_overlap_disagg_prefill()
+            else:
+                scheduler.event_loop_normal_disagg_prefill()
         elif disaggregation_mode == DisaggregationMode.DECODE:
-            scheduler.event_loop_normal_disagg_decode()
+            if scheduler.enable_overlap:
+                scheduler.event_loop_overlap_disagg_decode()
+            else:
+                scheduler.event_loop_normal_disagg_decode()
 
     except Exception:
         traceback = get_exception_traceback()
