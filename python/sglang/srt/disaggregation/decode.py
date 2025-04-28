@@ -100,7 +100,7 @@ class DecodePreallocQueue:
         self.num_reserved_decode_tokens = int(
             os.environ.get("SGLANG_HACK_PD_DECODE_NUM_RESERVED_DECODE_TOKENS", "512")
         )
-        print(f"HACK: {self.num_reserved_decode_tokens=}")
+        # print(f"HACK: {self.num_reserved_decode_tokens=}")
 
         # Queue for requests pending pre-allocation
         self.queue: List[DecodeRequest] = []

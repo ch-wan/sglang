@@ -179,12 +179,13 @@ async def handle_generate_request(request_data: dict):
 
     batch_size = _get_request_batch_size(modified_request)
     if batch_size is not None:
+        bootstrap_room = _generate_bootstrap_room()
         modified_request.update(
             {
                 "bootstrap_host": [hostname] * batch_size,
                 "bootstrap_port": [bootstrap_port] * batch_size,
                 "bootstrap_room": [
-                    _generate_bootstrap_room() for _ in range(batch_size)
+                     bootstrap_room + i for i in range(batch_size)
                 ],
             }
         )
