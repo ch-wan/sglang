@@ -270,18 +270,12 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
-        router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: Optional[int] = None,
-        num_expert_group: Optional[int] = None,
-        num_fused_shared_experts: int = 0,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+        *,
         global_num_experts: int = -1,
         expert_map: Optional[torch.Tensor] = None,
-        custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
-        correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
         inplace: bool = True,
         no_combine: bool = False,
@@ -289,21 +283,6 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         routed_scaling_factor: Optional[float] = None,
     ) -> torch.Tensor:
         from sglang.srt.layers.moe.fused_moe_triton import fused_experts
-        from sglang.srt.layers.moe.topk import select_experts
-
-        topk_weights, topk_ids = select_experts(
-            hidden_states=x,
-            router_logits=router_logits,
-            use_grouped_topk=use_grouped_topk,
-            top_k=top_k,
-            renormalize=renormalize,
-            topk_group=topk_group,
-            num_expert_group=num_expert_group,
-            num_fused_shared_experts=num_fused_shared_experts,
-            custom_routing_function=custom_routing_function,
-            correction_bias=correction_bias,
-            routed_scaling_factor=routed_scaling_factor,
-        )
 
         return fused_experts(
             x,
@@ -628,43 +607,20 @@ class CompressedTensorsWNA16MoEMethod(CompressedTensorsMoEMethod):
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
-        router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: Optional[int] = None,
-        num_expert_group: Optional[int] = None,
-        num_fused_shared_experts: int = 0,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
         global_num_experts: int = -1,
         expert_map: Optional[torch.Tensor] = None,
-        custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
-        correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
         routed_scaling_factor: Optional[float] = None,
     ) -> torch.Tensor:
-        from sglang.srt.layers.moe.topk import select_experts
 
         assert activation == "silu", "Only SiLU activation is supported."
         if expert_map is not None:
             raise NotImplementedError(
                 "Expert Parallelism is not supported for " "fused Marlin MoE method."
             )
-
-        topk_weights, topk_ids = select_experts(
-            hidden_states=x,
-            router_logits=router_logits,
-            use_grouped_topk=use_grouped_topk,
-            top_k=top_k,
-            renormalize=renormalize,
-            topk_group=topk_group,
-            num_expert_group=num_expert_group,
-            num_fused_shared_experts=num_fused_shared_experts,
-            custom_routing_function=custom_routing_function,
-            scoring_func=scoring_func,
-            correction_bias=correction_bias,
-            routed_scaling_factor=routed_scaling_factor,
-        )
 
         return torch.ops.vllm.fused_marlin_moe(
             x,

@@ -86,14 +86,15 @@ class MixtralMoE(nn.Module):
             quant_config=None,
             prefix=add_prefix("gate", prefix),
         )
+        
+        # TODO: add topk
+        
         MoEImpl = EPMoE if global_server_args_dict["enable_ep_moe"] else FusedMoE
         self.experts = MoEImpl(
             num_experts=num_experts,
-            top_k=top_k,
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
             params_dtype=params_dtype,
-            renormalize=True,
             quant_config=quant_config,
             tp_size=tp_size,
             prefix=add_prefix("experts", prefix),

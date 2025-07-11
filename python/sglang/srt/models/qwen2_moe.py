@@ -134,13 +134,13 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
                 f"the number of experts {config.num_experts}."
             )
 
+        # TODO: add topk
+
         self.experts = get_moe_impl_class()(
             layer_id=self.layer_id,
             num_experts=config.num_experts,
-            top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
             intermediate_size=config.moe_intermediate_size,
-            renormalize=config.norm_topk_prob,
             quant_config=quant_config,
             prefix=add_prefix("experts", prefix),
             # Additional args for FusedMoE

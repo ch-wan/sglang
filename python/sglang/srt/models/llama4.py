@@ -102,15 +102,14 @@ class Llama4MoE(nn.Module):
             quant_config=None,
             prefix=add_prefix("router", prefix),
         )
+        
+        # TODO: add topk
 
         self.experts = FusedMoE(
             num_experts=config.num_local_experts,
-            top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
-            custom_routing_function=Llama4MoE.custom_routing_function,
             intermediate_size=intermediate_size_moe,
             reduce_results=False,
-            renormalize=False,
             quant_config=quant_config,
             apply_router_weight_on_input=True,
             prefix=add_prefix("experts", prefix),

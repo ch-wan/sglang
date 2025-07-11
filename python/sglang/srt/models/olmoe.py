@@ -76,13 +76,13 @@ class OlmoeMoE(nn.Module):
             prefix=add_prefix("gate", prefix),
         )
 
+        # TODO: add topk
+
         self.experts = FusedMoE(
             num_experts=num_experts,
-            top_k=top_k,
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
             reduce_results=True,
-            renormalize=False,
             quant_config=quant_config,
             tp_size=tp_size,
             prefix=add_prefix("experts", prefix),

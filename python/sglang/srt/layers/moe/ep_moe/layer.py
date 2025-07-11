@@ -313,7 +313,7 @@ class EPMoE(torch.nn.Module):
             )
         return (local_num_experts, expert_map)
 
-    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
+    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor): # TODO: remove router_logits
         if deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM and self.use_fp8_w8a8:
             return self.forward_deepgemm(hidden_states, router_logits)
         else:
@@ -327,19 +327,6 @@ class EPMoE(torch.nn.Module):
         hidden_states_shape = hidden_states.shape
         hidden_states_dtype = hidden_states.dtype
         hidden_states_device = hidden_states.device
-        topk_weights, topk_ids = select_experts(
-            hidden_states=hidden_states,
-            router_logits=router_logits,
-            top_k=self.top_k,
-            use_grouped_topk=self.use_grouped_topk,
-            renormalize=self.renormalize,
-            topk_group=self.topk_group,
-            num_expert_group=self.num_expert_group,
-            num_fused_shared_experts=self.num_fused_shared_experts,
-            correction_bias=self.correction_bias,
-            custom_routing_function=self.custom_routing_function,
-            routed_scaling_factor=self.routed_scaling_factor,
-        )
 
         if not self.use_block_quant:
             # Convert per-tensor quant to per-block quant by repeating scales for forward_deepgemm
@@ -482,23 +469,6 @@ class EPMoE(torch.nn.Module):
                 use_flashinfer=False,  # TODO: use flashinfer
                 use_per_token_if_dynamic=self.use_per_token_if_dynamic,
             )
-
-        topk_weights, topk_ids = select_experts(
-            hidden_states=hidden_states,
-            router_logits=router_logits,
-            top_k=self.top_k,
-            use_grouped_topk=self.use_grouped_topk,
-            renormalize=self.renormalize,
-            topk_group=self.topk_group,
-            num_expert_group=self.num_expert_group,
-            num_fused_shared_experts=self.num_fused_shared_experts,
-            correction_bias=self.correction_bias,
-            custom_routing_function=self.custom_routing_function,
-            routed_scaling_factor=self.routed_scaling_factor,
-            expert_location_dispatch_info=ExpertLocationDispatchInfo.init_new(
-                layer_id=self.layer_id,
-            ),
-        )
 
         if self.use_w4afp8:
             local_topk_ids = topk_ids

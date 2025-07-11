@@ -107,6 +107,8 @@ class Grok1MoE(nn.Module):
         custom_routing_function = functools.partial(
             fused_moe_router_shim, self.router_logit_softcapping
         )
+        
+        # TODO: add topk
 
         kwargs = {}
         if global_server_args_dict["enable_ep_moe"]:
@@ -120,14 +122,11 @@ class Grok1MoE(nn.Module):
 
         self.experts = MoEImpl(
             num_experts=num_experts,
-            top_k=top_k,
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
             params_dtype=params_dtype,
-            renormalize=False,
             quant_config=quant_config,
             tp_size=tp_size,
-            custom_routing_function=custom_routing_function,
             activation="gelu",
             **kwargs,
         )

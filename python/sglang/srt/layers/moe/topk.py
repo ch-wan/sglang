@@ -20,14 +20,14 @@ import torch.nn.functional as F
 
 from sglang.srt.eplb import expert_location_dispatch
 from sglang.srt.eplb.expert_distribution import (
-    ExpertDistributionRecorder,
     get_global_expert_distribution_recorder,
 )
+
+from sglang.srt.custom_op import CustomOp
 from sglang.srt.eplb.expert_location_dispatch import (
     ExpertLocationDispatchInfo,
     topk_ids_logical_to_physical,
 )
-from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.utils import (
     cpu_has_amx_support,
     get_bool_env_var,
@@ -56,6 +56,46 @@ if _use_aiter:
     except ImportError:
         raise ImportError("aiter is required when SGLANG_USE_AITER is set to True")
 
+
+class TopK(CustomOp):
+
+    # TODO(ch-wan): support triton_kernels
+
+    def __init__(self,
+        top_k: int,
+        *,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        renormalize: bool = True,
+        num_fused_shared_experts: int = 0,
+        custom_routing_function: Optional[Callable] = None,
+        correction_bias: Optional[torch.Tensor] = None,
+    ):
+        super().__init__()
+        self.top_k = top_k
+        self.use_grouped_topk = use_grouped_topk
+        self.renormalize = renormalize
+        self.topk_group = topk_group
+        self.num_expert_group = num_expert_group
+        self.num_fused_shared_experts = num_fused_shared_experts
+        self.custom_routing_function = custom_routing_function
+        self.correction_bias = correction_bias
+
+    # def forward(self, hidden_states, router_logits):
+    
+    def forward_native(self, *args, **kwargs):
+        return select_experts(torch_native=True, *args, **kwargs)
+    
+    def forward_cuda(self, *args, **kwargs):
+        return select_experts(torch_native=False, *args, **kwargs)
+    
+    def forward_cpu(self, *args, **kwargs):
+        return select_experts(*args, **kwargs)
+
+    def forward_npu(self, *args, **kwargs):
+        return select_experts(torch_native=True, *args, **kwargs)
+    
 
 def fused_topk_torch_native(
     hidden_states: torch.Tensor,

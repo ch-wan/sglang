@@ -151,14 +151,14 @@ class HunYuanSparseMoeBlock(nn.Module):
                 if isinstance(config.moe_intermediate_size, int)
                 else config.moe_intermediate_size[layer_id]
             )
+        
+        # TODO: add topk 
 
         self.experts = FusedMoE(
             num_experts=config.num_experts,
-            top_k=top_k,
             hidden_size=config.hidden_size,
             intermediate_size=intermediate_size,
             reduce_results=False,
-            renormalize=True if top_k > 1 else False,
             quant_config=quant_config,
         )
 
