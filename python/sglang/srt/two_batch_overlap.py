@@ -328,6 +328,7 @@ class TboDPAttentionPreparer:
             and local_can_run_tbo_aggregated
             and forward_mode_agree
         )
+        print(f"{can_run_tbo=} {local_can_run_tbo_aggregated=} {forward_mode_agree=}")
 
         tbo_split_seq_index = self.local_tbo_split_seq_index if can_run_tbo else None
         global_forward_mode = global_forward_mode if can_run_tbo else None
@@ -512,10 +513,7 @@ class TboForwardBatchPreparer:
         )
 
         # TODO improve, e.g. unify w/ `init_raw`
-        if (
-            global_server_args_dict["moe_dense_tp_size"] == 1
-            and batch.gathered_buffer is not None
-        ):
+        if batch.gathered_buffer is not None:
             sum_len = end_token_index - start_token_index
             gathered_buffer = torch.zeros(
                 (sum_len, batch.gathered_buffer.shape[1]),
