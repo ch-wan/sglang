@@ -140,7 +140,7 @@ class GroupedGemmRunner(torch.nn.Module):
         return c
 
 
-class EPMoE(torch.nn.Module):
+class EPMoE(FusedMoE):
     """
     MoE Expert Parallel Impl
 
@@ -162,27 +162,31 @@ class EPMoE(torch.nn.Module):
         routed_scaling_factor: Optional[float] = None,
         use_per_token_if_dynamic: bool = True,
     ):
-        super().__init__()
+        super().__init__(
+            num_experts=num_experts,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            top_k=top_k,
+            layer_id=layer_id,
+            params_dtype=params_dtype,
+            quant_config=quant_config,
+            tp_size=tp_size,
+            prefix=prefix,
+            activation=activation,
+            routed_scaling_factor=routed_scaling_factor,
+            enable_ep_moe=True,
+            skip_quant=True,
+        )
 
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
 
-        self.tp_size = (
-            tp_size if tp_size is not None else get_tensor_model_parallel_world_size()
-        )
-        self.tp_rank = get_tensor_model_parallel_rank()
-
         self.layer_id = layer_id
-        self.num_experts = num_experts
-        assert self.num_experts % self.tp_size == 0
         self.num_experts_per_partition, self.expert_map = self.determine_expert_map()
         self.start_expert_id = self.tp_rank * self.num_experts_per_partition
         self.end_expert_id = self.start_expert_id + self.num_experts_per_partition - 1
 
-        self.top_k = top_k
         self.intermediate_size = intermediate_size
-        self.activation = activation
-        self.routed_scaling_factor = routed_scaling_factor
         self.use_per_token_if_dynamic = use_per_token_if_dynamic
 
         if quant_config is None:
@@ -218,6 +222,7 @@ class EPMoE(torch.nn.Module):
             self.activation_scheme = quant_config.activation_scheme
             self.use_w4afp8 = False
 
+        self.quant_config = quant_config
         self.quant_method.create_weights(
             layer=self,
             num_experts=self.num_experts_per_partition,
@@ -247,8 +252,8 @@ class EPMoE(torch.nn.Module):
                     Contains global_num_experts for experts not assigned to the current rank.
                     Returns None if ep_size is 1.
         """
-        ep_size = self.tp_size
-        ep_rank = self.tp_rank
+        ep_size = self.ep_size
+        ep_rank = self.ep_rank
         global_num_experts = self.num_experts
 
         assert ep_size > 0
@@ -517,6 +522,18 @@ class EPMoE(torch.nn.Module):
         if expert_id < self.start_expert_id or expert_id > self.end_expert_id:
             return
         expert_id = expert_id - self.start_expert_id
+        
+        """
+        self._weight_loader_impl(
+            param=param,
+            loaded_weight=loaded_weight,
+            weight_name=weight_name,
+            shard_id=shard_id,
+            expert_id=expert_id,
+        )
+        
+        return
+        """
 
         if shard_id not in ("w1", "w2", "w3"):
             raise ValueError(
