@@ -37,7 +37,7 @@ from sglang.srt.layers.quantization.fp8_kernel import (
     sglang_per_token_quant_fp8,
 )
 from sglang.srt.layers.quantization.unquant import UnquantizedEPMoEMethod
-from sglang.srt.layers.quantization.w4afp8 import W4AFp8Config, W4AFp8MoEMethod
+from sglang.srt.layers.quantization.w4afp8 import W4AFp8Config, W4AFp8EPMoEMethod
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.utils import (
@@ -193,7 +193,7 @@ class EPMoE(torch.nn.Module):
             self.activation_scheme = None
             self.use_w4afp8 = False
         elif isinstance(quant_config, W4AFp8Config):
-            self.quant_method: Optional[QuantizeMethodBase] = W4AFp8MoEMethod(
+            self.quant_method: Optional[QuantizeMethodBase] = W4AFp8EPMoEMethod(
                 quant_config
             )
             self.use_w4afp8 = True
@@ -220,7 +220,7 @@ class EPMoE(torch.nn.Module):
 
         self.quant_method.create_weights(
             layer=self,
-            num_experts_per_partition=self.num_experts_per_partition,
+            num_experts=self.num_experts_per_partition,
             hidden_size=hidden_size,
             intermediate_size=self.intermediate_size,
             params_dtype=params_dtype,
@@ -228,19 +228,6 @@ class EPMoE(torch.nn.Module):
         )
 
         self.grouped_gemm_runner = None
-
-        self.w13_weight_fp8 = (
-            self.w13_weight,
-            (
-                self.w13_weight_scale_inv
-                if self.use_block_quant
-                else self.w13_weight_scale
-            ),
-        )
-        self.w2_weight_fp8 = (
-            self.w2_weight,
-            self.w2_weight_scale_inv if self.use_block_quant else self.w2_weight_scale,
-        )
 
     # Adapted from https://github.com/vllm-project/vllm/blob/9fb52e523abf7bdaf7e60cf2971edb5a1b13dc08/vllm/model_executor/layers/fused_moe/layer.py#L544C1-L586C43
     # Modifications: use determine_expert_map as a class internal function, set 'global_num_experts' rather than '-1' for experts not assigned to the current rank.
@@ -296,6 +283,20 @@ class EPMoE(torch.nn.Module):
         hidden_states: torch.Tensor,
         topk_output: TopKOutput,
     ):
+
+        self.w13_weight_fp8 = (
+            self.w13_weight,
+            (
+                self.w13_weight_scale_inv
+                if self.use_block_quant
+                else self.w13_weight_scale
+            ),
+        )
+        self.w2_weight_fp8 = (
+            self.w2_weight,
+            self.w2_weight_scale_inv if self.use_block_quant else self.w2_weight_scale,
+        )
+
         assert self.quant_method is not None
         assert self.activation == "silu"
         hidden_states_shape = hidden_states.shape
@@ -435,7 +436,11 @@ class EPMoE(torch.nn.Module):
         return output
 
     def forward_normal(self, hidden_states: torch.Tensor, topk_output: TopKOutput):
-        assert self.quant_method is not None
+       
+        if isinstance(self.quant_method, UnquantizedEPMoEMethod) or isinstance(self.quant_method, W4AFp8EPMoEMethod):
+            return self.quant_method.apply(self, hidden_states, topk_output)
+        
+        
         topk_weights, topk_ids, _ = topk_output
 
         hidden_states_shape = hidden_states.shape
