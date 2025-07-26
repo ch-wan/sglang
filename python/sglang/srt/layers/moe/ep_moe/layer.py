@@ -57,8 +57,6 @@ _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
 if not (_is_npu or _is_hip):
     from sgl_kernel import silu_and_mul
 
-    from sglang.srt.layers.moe.cutlass_w4a8_moe import cutlass_w4a8_moe
-
 if _use_aiter:
     from aiter import ActivationType, QuantType
     from aiter.fused_moe import fused_moe
@@ -183,7 +181,7 @@ class EPMoE(FusedMoE):
 
         self.layer_id = layer_id
         self.num_experts_per_partition, self.expert_map = self.determine_expert_map()
-        self.start_expert_id = self.tp_rank * self.num_experts_per_partition
+        self.start_expert_id = self.ep_rank * self.num_experts_per_partition
         self.end_expert_id = self.start_expert_id + self.num_experts_per_partition - 1
 
         self.intermediate_size = intermediate_size
@@ -523,7 +521,6 @@ class EPMoE(FusedMoE):
             return
         expert_id = expert_id - self.start_expert_id
         
-        """
         self._weight_loader_impl(
             param=param,
             loaded_weight=loaded_weight,
@@ -531,99 +528,7 @@ class EPMoE(FusedMoE):
             shard_id=shard_id,
             expert_id=expert_id,
         )
-        
         return
-        """
-
-        if shard_id not in ("w1", "w2", "w3"):
-            raise ValueError(
-                f"shard_id must be ['w1','w2','w3'] but " f"got {shard_id}."
-            )
-
-        # Special case for fp8 scales.
-        if "scale" in weight_name:
-            self._load_fp8_scale(
-                param.data,
-                loaded_weight,
-                weight_name,
-                shard_id,
-                expert_id,
-            )
-            return
-
-        if shard_id == "w2":
-            param.data[expert_id] = loaded_weight
-        elif shard_id == "w1":
-            param.data[expert_id][: self.intermediate_size, :] = loaded_weight
-        elif shard_id == "w3":
-            param.data[expert_id][self.intermediate_size :, :] = loaded_weight
-        else:
-            raise ValueError(f"Expected shard_id w1,w2 or w3 but got {shard_id}")
-
-    def _load_fp8_scale(
-        self,
-        param: torch.nn.Parameter,
-        loaded_weight: torch.Tensor,
-        weight_name: str,
-        shard_id: str,
-        expert_id: int,
-    ) -> None:
-        param_data = param.data
-
-        # Input scales can be loaded directly and should be equal.
-        if "input_scale" in weight_name:
-            if self.use_w4afp8:
-                if shard_id == "w1":
-                    param_data[expert_id][0] = loaded_weight
-                elif shard_id == "w3":
-                    param_data[expert_id][1] = loaded_weight
-                else:
-                    param_data[expert_id] = loaded_weight
-                return
-
-            if (
-                (shard_id == "w1" or shard_id == "w3")
-                and param_data[expert_id] != 1
-                and (param_data[expert_id] - loaded_weight).abs() > 1e-5
-            ):
-                raise ValueError(
-                    "input_scales of w1 and w3 of a layer "
-                    f"must be equal. But got {param_data[expert_id]} "
-                    f"vs. {loaded_weight}"
-                )
-            param_data[expert_id] = loaded_weight
-        # Weight scales
-        elif "weight_scale" in weight_name:
-            if self.use_block_quant:
-                block_n, block_k = self.block_shape[0], self.block_shape[1]
-                if shard_id == "w1":
-                    param_data[expert_id][
-                        : (self.intermediate_size + block_n - 1) // block_n, :
-                    ] = loaded_weight
-                elif shard_id == "w3":
-                    param_data[expert_id][
-                        (self.intermediate_size + block_n - 1) // block_n :, :
-                    ] = loaded_weight
-                else:  # w2
-                    param_data[expert_id] = loaded_weight
-            elif self.use_w4afp8:
-                if shard_id == "w1":
-                    param_data[expert_id][: self.intermediate_size, :] = loaded_weight
-                elif shard_id == "w3":
-                    param_data[expert_id][self.intermediate_size :, :] = loaded_weight
-                else:
-                    param_data[expert_id] = loaded_weight
-            # If we are in merged column case (gate_up_proj)
-            else:
-                if shard_id in ("w1", "w3"):
-                    # We have to keep the weight scales of w1 and w3 because
-                    # we need to re-quantize w1/w3 weights after weight loading.
-                    idx = 0 if shard_id == "w1" else 1
-                    param_data[expert_id][idx] = loaded_weight
-
-                # If we are in the row parallel case (down_proj)
-                else:
-                    param_data[expert_id] = loaded_weight
 
 
 class DeepEPMoE(EPMoE):
