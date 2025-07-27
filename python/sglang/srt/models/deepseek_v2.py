@@ -594,41 +594,13 @@ class DeepseekV2MoE(nn.Module):
             topk_weights = torch.empty(
                 (0, self.top_k), dtype=torch.float32, device=hidden_states.device
             )
-        if self.ep_size > 1:
-            # TODO(ch-wan): allow users to set num_max_dispatch_tokens_per_rank value
-            (
-                hidden_states,
-                topk_idx,
-                topk_weights,
-                reorder_topk_ids,
-                num_recv_tokens_per_expert,
-                seg_indptr,
-                masked_m,
-                expected_m,
-            ) = self.deepep_dispatcher.dispatch(
-                hidden_states=hidden_states,
-                topk_idx=topk_idx,
-                topk_weights=topk_weights,
-                forward_batch=forward_batch,
-            )
+
         final_hidden_states = self.experts(
             hidden_states=hidden_states,
             topk_idx=topk_idx,
             topk_weights=topk_weights,
-            reorder_topk_ids=reorder_topk_ids,
-            seg_indptr=seg_indptr,
-            masked_m=masked_m,
-            expected_m=expected_m,
-            num_recv_tokens_per_expert=num_recv_tokens_per_expert,
             forward_batch=forward_batch,
         )
-        if self.ep_size > 1:
-            final_hidden_states = self.deepep_dispatcher.combine(
-                hidden_states=final_hidden_states,
-                topk_idx=topk_idx,
-                topk_weights=topk_weights,
-                forward_batch=forward_batch,
-            )
 
         if shared_output is not None:
             x = shared_output
@@ -721,11 +693,6 @@ class DeepseekV2MoE(nn.Module):
             hidden_states=state.pop("hidden_states_experts_input"),
             topk_idx=state.topk_idx_dispatched,
             topk_weights=state.topk_weights_dispatched,
-            reorder_topk_ids=state.pop("reorder_topk_ids"),
-            seg_indptr=state.pop("seg_indptr"),
-            masked_m=state.pop("masked_m"),
-            expected_m=state.pop("expected_m"),
-            num_recv_tokens_per_expert=state.pop("num_recv_tokens_per_expert"),
             forward_batch=state.forward_batch,
         )
 

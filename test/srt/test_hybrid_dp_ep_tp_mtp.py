@@ -16,6 +16,9 @@ from sglang.test.test_utils import (
 )
 
 
+DEFAULT_DEEPPEP_MODEL_NAME_FOR_TEST = "/dev/shm/DeepSeek-V3-0324"
+
+
 class Test00(CustomTestCase):
     @classmethod
     def setUpClass(cls):

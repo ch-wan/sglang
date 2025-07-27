@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.layers.quantization import deep_gemm_wrapper
+from sglang.srt.layers.moe.token_dispatcher.base_dispatcher import BaseDispatcher, BaseDispatcherConfig
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.utils import (
     DeepEPMode,
@@ -11,6 +15,9 @@ from sglang.srt.utils import (
     is_hip,
     load_json_config,
 )
+
+if TYPE_CHECKING:
+    from sglang.srt.layers.moe.a2a_output import DispatchOutput, DeepEPNormalOutput, DeepEPLLOutput
 
 try:
     from deep_ep import Buffer, Config
@@ -139,7 +146,7 @@ class DeepEPBuffer:
         cls._dispatch_mode = DeepEPDispatchMode.LOW_LATENCY
 
 
-class DeepEPConfig:
+class DeepEPConfig(BaseDispatcherConfig):
     _instance = None
 
     def __init__(self):
@@ -255,63 +262,19 @@ class _DeepEPDispatcherImplNormal(_DeepEPDispatcherImplBase):
         return hidden_states, topk_idx, topk_weights, previous_event
 
     def dispatch_b(self, hidden_states, topk_idx, topk_weights, previous_event):
-        if deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM:
-            (
-                hidden_states,
-                topk_idx,
-                topk_weights,
-                num_recv_tokens_per_expert_list,
-                event,
-            ) = self._dispatch_core(
-                hidden_states, topk_idx, topk_weights, previous_event
-            )
-            event.current_stream_wait() if self.async_finish else ()
-            return (
-                hidden_states,
-                topk_idx,
-                topk_weights,
-                None,
-                num_recv_tokens_per_expert_list,
-                None,
-                None,
-                None,
-            )
-        else:
-            (
-                hidden_states,
-                topk_idx,
-                topk_weights,
-                num_recv_tokens_per_expert_list,
-                event,
-            ) = self._dispatch_core(
-                hidden_states, topk_idx, topk_weights, previous_event
-            )
-            event.current_stream_wait() if self.async_finish else ()
-            if hidden_states.shape[0] > 0:
-                reorder_topk_ids, seg_indptr, hidden_states = self._deepep_permute(
-                    hidden_states, topk_idx, fp8_dtype=hidden_states.dtype
-                )
-            else:
-                reorder_topk_ids = torch.empty(
-                    (0,), device=hidden_states.device, dtype=torch.int64
-                )
-                seg_indptr = torch.zeros(
-                    (self.num_experts + 1,),
-                    device=hidden_states.device,
-                    dtype=torch.int64,
-                )
-
-            masked_m = expected_m = None
-            return (
-                hidden_states,
-                topk_idx,
-                topk_weights,
-                reorder_topk_ids,
-                None,
-                seg_indptr,
-                masked_m,
-                expected_m,
-            )
+        (
+            hidden_states,
+            topk_idx,
+            topk_weights,
+            num_recv_tokens_per_expert_list,
+            event,
+        ) = self._dispatch_core(
+            hidden_states, topk_idx, topk_weights, previous_event
+        )
+        event.current_stream_wait() if self.async_finish else ()
+        return DeepEPNormalOutput(
+            hidden_states, topk_idx, topk_weights, num_recv_tokens_per_expert_list
+        )
 
     def _dispatch_core(
         self,
@@ -384,10 +347,6 @@ class _DeepEPDispatcherImplNormal(_DeepEPDispatcherImplBase):
         use_fp8_w8a8: bool = False,
         use_block_quant: bool = False,
     ):
-        """
-        Copy from Megatron-Core token_dispatcher MoEFlexTokenDispatcher
-        https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/moe/token_dispatcher.py
-        """
         if _use_aiter:
             # skip permutation here as aiter fused_moe has fused inside
             reorder_topk_ids = torch.empty(
@@ -636,7 +595,7 @@ class _Stage(Enum):
     AFTER_COMBINE_A = auto()
 
 
-class DeepEPDispatcher:
+class DeepEPDispatcher(BaseDispatcher):
     def __init__(
         self,
         group: torch.distributed.ProcessGroup,
@@ -676,7 +635,7 @@ class DeepEPDispatcher:
 
         self._stage = _Stage.INITIAL
 
-    def dispatch(self, *args, **kwargs) -> Tuple:
+    def dispatch(self, *args, **kwargs) -> DispatchOutput:
         self.dispatch_a(*args, **kwargs)
         ret = self.dispatch_b()
         return ret
