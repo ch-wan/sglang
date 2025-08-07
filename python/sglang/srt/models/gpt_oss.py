@@ -102,7 +102,7 @@ class GptOssSparseMoeBlock(nn.Module):
                 f"the number of experts {config.num_local_experts}."
             )
 
-        if global_server_args_dict["flashinfer_mxfp4_moe"]:
+        if global_server_args_dict["enable_flashinfer_mxfp4_moe"]:
             self.topk = None
         else:
             self.topk = TopK(
