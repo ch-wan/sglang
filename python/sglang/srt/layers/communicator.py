@@ -131,6 +131,8 @@ class LayerScatterModes:
     @classmethod
     def _compute_mlp_mode(cls, context: _LayerModeComputationContext):
         if context.is_layer_sparse:
+            if get_moe_a2a_backend().is_pplx():
+                return ScatterMode.SCATTERED  # FIXME: should be TP_ATTN_FULL
             return (
                 ScatterMode.SCATTERED
                 if (
@@ -138,7 +140,7 @@ class LayerScatterModes:
                     get_moe_a2a_backend().is_deepep() or get_moe_a2a_backend().is_mooncake()
                     or should_use_flashinfer_cutlass_moe_fp4_allgather()
                 )
-                else ScatterMode.TP_ATTN_FULL if get_moe_a2a_backend().is_pplx() else ScatterMode.FULL
+                else ScatterMode.FULL
             )
         else:
             return (
