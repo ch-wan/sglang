@@ -12,11 +12,23 @@ if TYPE_CHECKING:
     from sglang.srt.layers.attention.dsa.dsa_indexer import BaseIndexerMetadata
     from sglang.srt.layers.radix_attention import RadixAttention
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
+    from sglang.srt.model_executor.model_runner import ModelRunner
     from sglang.srt.speculative.spec_info import SpecInput
 
 
 class AttentionBackend(ABC):
     """The base class of attention backends"""
+
+    def __init__(self, model_runner: "ModelRunner") -> None:
+        from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+
+        self.req_to_token_pool = model_runner.req_to_token_pool
+        self.token_to_kv_pool = model_runner.token_to_kv_pool
+        self.hisparse_coordinator = getattr(model_runner, "hisparse_coordinator", None)
+        self.device = model_runner.device
+        # Pattern D attrs — static pool properties
+        self.kv_cache_dtype = getattr(model_runner.token_to_kv_pool, "dtype", None)
+        self.is_swa_pool = isinstance(model_runner.token_to_kv_pool, SWAKVPool)
 
     @abstractmethod
     def init_forward_metadata(self, forward_batch: ForwardBatch):
