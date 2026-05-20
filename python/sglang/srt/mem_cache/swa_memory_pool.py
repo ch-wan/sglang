@@ -395,9 +395,11 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         self.is_not_in_free_group = True
         self.free_group = []
 
-        self.clear()
+        # _kvcache must be set before clear() because clear() calls
+        # self._kvcache.invalidate_loc_cache().
         self._kvcache = kvcache
         self._kvcache.register_mapping(self.full_to_swa_index_mapping)
+        self.clear()
 
     def available_size(self):
         return min(
