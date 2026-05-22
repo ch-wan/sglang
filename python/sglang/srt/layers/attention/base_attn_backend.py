@@ -37,7 +37,17 @@ class AttentionBackend(ABC):
         forward_mode: ForwardMode,
         spec_info: Optional[SpecInput],
     ):
-        """Init the metadata for a forward pass for capturing a cuda graph."""
+        """Init the metadata for a forward pass for capturing a cuda graph.
+
+        Subclasses implement this with an *idempotent* body: the first call
+        for a given ``bs`` allocates any cached metadata into
+        ``self.<...>_cuda_graph_metadata[bs]``; subsequent calls for the same
+        ``bs`` refresh the existing allocation in place (``.copy_()`` /
+        triton kernel writes / etc.) without reallocating. The same body
+        therefore serves both roles -- cuda graph capture (which records the
+        pointers) and replay (which only needs to refresh the contents of
+        the captured buffers).
+        """
         raise NotImplementedError()
 
     def init_forward_metadata_replay_cuda_graph(
@@ -51,8 +61,37 @@ class AttentionBackend(ABC):
         spec_info: Optional[SpecInput],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
-        """Init the metadata for a forward pass for replaying a cuda graph."""
-        raise NotImplementedError()
+        """Init the metadata for a forward pass for replaying a cuda graph.
+
+        Default implementation: route to
+        ``init_forward_metadata_capture_cuda_graph`` with translated args.
+        Subclasses whose capture body is already idempotent (alloc on first
+        call, in-place refresh on later calls) inherit this for free.
+
+        ``num_tokens`` is translated from ``bs`` / ``seq_lens_sum`` /
+        ``forward_mode`` heuristically. Subclasses whose capture body has
+        ``num_tokens`` semantics the default cannot reconstruct (e.g.
+        verify/draft-extend with non-trivial num_tokens_per_bs) should
+        override this with an explicit one-liner that recomputes
+        ``num_tokens`` from backend-local state.
+        """
+        if forward_mode.is_decode_or_idle():
+            num_tokens = bs
+        else:
+            num_tokens = (
+                int(seq_lens_sum)
+                if seq_lens_sum is not None
+                else int(seq_lens.sum().item())
+            )
+        return self.init_forward_metadata_capture_cuda_graph(
+            bs,
+            num_tokens,
+            req_pool_indices,
+            seq_lens,
+            encoder_lens,
+            forward_mode,
+            spec_info,
+        )
 
     def get_cuda_graph_seq_len_fill_value(self):
         """Get the fill value for padded seq lens. Typically, it is 0 or 1."""
