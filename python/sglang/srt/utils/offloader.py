@@ -80,7 +80,6 @@ def create_offloader(dp_rank: int):
             prefetch_step=get_exec().offload.offload_prefetch_step,
             mode=get_exec().offload.offload_mode,
             dp_rank=dp_rank,
-            dp_size=get_parallel().dp_size,
         )
     return NoopOffloader()
 
@@ -162,8 +161,8 @@ class OffloaderV2(BaseOffloader):
         prefetch_step: int,
         mode: str,
         dp_rank: int,
-        dp_size: int,
     ):
+        dp_size = get_parallel().dp_size
         self.group_size = group_size
         self.num_in_group = num_in_group
         self.prefetch_step = prefetch_step

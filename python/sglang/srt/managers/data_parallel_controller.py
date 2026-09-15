@@ -467,7 +467,7 @@ class DataParallelController:
             )
         else:
             # Other nodes: Receive worker ports from node 0
-            return self._receive_ports_as_client(endpoint, get_parallel().node_rank)
+            return self._receive_ports_as_client(endpoint)
 
     def _broadcast_ports_as_server(
         self, endpoint: str, expected_clients: int, worker_ports: list[int]
@@ -522,9 +522,10 @@ class DataParallelController:
             sock_send(rep_socket, wrap_as_pickle(worker_ports))
             logger.debug(f"Sent worker ports to node {client_rank}")
 
-    def _receive_ports_as_client(self, endpoint: str, node_rank: int) -> list[int]:
+    def _receive_ports_as_client(self, endpoint: str) -> list[int]:
         """Receive worker ports from the server node."""
         logger.debug("Connecting to node 0 to receive worker ports")
+        node_rank = get_parallel().node_rank
 
         req_socket = get_zmq_socket(self.context, zmq.REQ, endpoint, False)
         req_socket.setsockopt(zmq.RCVTIMEO, 600 * 1000)  # 10 minute timeout
@@ -567,9 +568,7 @@ class DataParallelController:
             primary_endpoint = NetworkAddress(
                 primary.host, primary.port + DP_ATTENTION_HANDSHAKE_PORT_DELTA
             ).to_tcp()
-            all_ports = self._receive_ports_as_client(
-                primary_endpoint, get_parallel().node_rank
-            )
+            all_ports = self._receive_ports_as_client(primary_endpoint)
             offset = self._joiner_slot_offset(server_args)
             local_tp_span = self._joiner_local_tp_span(server_args)
             broadcasted_ports = all_ports[offset : offset + local_tp_span]

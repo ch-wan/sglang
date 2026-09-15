@@ -20,6 +20,7 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.managers.schedule_batch import Req, ScheduleBatch
 from sglang.srt.mem_cache.common import release_kv_cache
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.utils import broadcast_pyobj
 from sglang.srt.utils.common import get_device_module
@@ -54,7 +55,6 @@ class DynamicChunkSizer:
         device: str,
         pp_group: GroupCoordinator,
         world_group: GroupCoordinator,
-        pp_rank: int,
     ):
         self.model_runner = model_runner
         self.model_config = model_config
@@ -68,7 +68,7 @@ class DynamicChunkSizer:
         self.device = device
         self.pp_group = pp_group
         self.world_group = world_group
-        self.pp_rank = pp_rank
+        self.pp_rank = get_parallel().pp_rank
         self.predictor = ChunkSizePredictor()
 
     def profile_and_fit(self) -> bool:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils import (
     log_debug_on_rank0,
 )
@@ -217,9 +218,10 @@ def update_config(model_config, attr_name, new_value):
 
 
 def adjust_config_with_unaligned_cpu_tp(
-    model_config: ModelConfig, load_config: LoadConfig, tp_size: int
+    model_config: ModelConfig, load_config: LoadConfig
 ) -> ModelConfig:
     # Support the case where the num_attention_heads is not divisible by the TP size.
+    tp_size = get_parallel().tp_size
     weight_block_size = may_get_weight_block_size(model_config, load_config)
 
     for config in [model_config.hf_config, model_config.hf_text_config]:

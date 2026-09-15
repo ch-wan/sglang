@@ -661,12 +661,7 @@ class ModelRunner:
         self.init_token_oracle()
         self.sampler = create_sampler()
         self.load_model()
-        prepare_moe_topk(
-            model=self.model,
-            model_config=self.model_config,
-            moe_ep_size=self.ps.moe_ep_size,
-            moe_ep_rank=self.ps.moe_ep_rank,
-        )
+        prepare_moe_topk(model=self.model, model_config=self.model_config)
 
         self.maybe_init_dwdp()
 
@@ -764,8 +759,6 @@ class ModelRunner:
         self.expert_backup_client = (
             ExpertBackupClient(
                 model_config=self.model_config,
-                moe_ep_size=self.ps.moe_ep_size,
-                moe_ep_rank=self.ps.moe_ep_rank,
                 get_model=lambda: self.model,
             )
             if (
@@ -800,16 +793,12 @@ class ModelRunner:
     def get_pp_proxy_topk_size(self) -> Optional[int]:
         return misc_utils.resolve_pp_proxy_topk_size(
             model_config=self.model_config,
-            pp_size=self.ps.pp_size,
-            pp_rank=self.ps.pp_rank,
             start_layer=self.layer_info.start_layer,
         )
 
     def get_pp_proxy_residual_num_blocks(self) -> Optional[int]:
         return misc_utils.resolve_pp_proxy_residual_num_blocks(
             model_config=self.model_config,
-            pp_size=self.ps.pp_size,
-            pp_rank=self.ps.pp_rank,
             start_layer=self.layer_info.start_layer,
         )
 
@@ -964,7 +953,6 @@ class ModelRunner:
             swap_in_block_size=hisparse_cfg.swap_in_block_size,
             shared_index_layers=resolve_shared_index_layers(
                 hf_text_config=self.model_config.hf_text_config,
-                pp_size=self.ps.pp_size,
                 is_speculative=self.spec_algorithm.is_speculative(),
             ),
         )
@@ -1134,12 +1122,7 @@ class ModelRunner:
         )
 
     def check_quantized_moe_compatibility(self):
-        check_quantized_moe_compatibility(
-            model_config=self.model_config,
-            tp_size=self.ps.tp_size,
-            moe_ep_size=self.ps.moe_ep_size,
-            moe_dp_size=self.ps.moe_dp_size,
-        )
+        check_quantized_moe_compatibility(model_config=self.model_config)
 
     def init_torch_distributed(self):
         result = bootstrap.init_torch_distributed(
@@ -1178,7 +1161,6 @@ class ModelRunner:
         self.load_config = build_load_config(
             server_args=self.server_args,
             load_format=draft_load_format,
-            tp_rank=self.ps.tp_rank,
             remote_instance_weight_transporter_engine=self.remote_instance_weight_transporter.engine,
             remote_instance_weight_transporter_session_id=self.remote_instance_weight_transporter.session_id,
             draft_model_idx=self.draft_model_idx,
@@ -1191,13 +1173,10 @@ class ModelRunner:
         )
         if self.device == "cpu":
             self.model_config = adjust_config_with_unaligned_cpu_tp(
-                self.model_config, self.load_config, self.ps.tp_size
+                self.model_config, self.load_config
             )
 
-        maybe_trigger_remote_instance_nccl_send_group(
-            tp_rank=self.ps.tp_rank,
-            load_format=draft_load_format,
-        )
+        maybe_trigger_remote_instance_nccl_send_group(load_format=draft_load_format)
 
         with self._load_format_scope(draft_load_format):
             loaded = load_model_with_memory_saver(
@@ -1271,9 +1250,6 @@ class ModelRunner:
             model=self.model,
             spec_algorithm=self.spec_algorithm,
             is_draft_worker=self.is_draft_worker,
-            tp_size=self.ps.tp_size,
-            tp_rank=self.ps.tp_rank,
-            pp_rank=self.ps.pp_rank,
         )
 
         if dumper.may_enable:
@@ -1290,7 +1266,6 @@ class ModelRunner:
         if self.startup_weight_load is None:
             dist_barrier_after_load(
                 elastic_ep_backend=get_exec().moe.elastic_ep_backend,
-                tp_rank=self.ps.tp_rank,
                 is_ep_joiner=get_exec().moe.is_ep_joiner,
             )
 
@@ -1313,7 +1288,6 @@ class ModelRunner:
         self.startup_weight_load.finalize()
         dist_barrier_after_load(
             elastic_ep_backend=get_exec().moe.elastic_ep_backend,
-            tp_rank=self.ps.tp_rank,
             is_ep_joiner=get_exec().moe.is_ep_joiner,
         )
         self.startup_weight_load = None
@@ -1515,9 +1489,7 @@ class ModelRunner:
         )
 
     def apply_torch_tp(self):
-        model_parallel.apply_torch_tp(
-            model=self.model, device=self.device, tp_size=self.ps.tp_size
-        )
+        model_parallel.apply_torch_tp(model=self.model, device=self.device)
 
     def update_decode_attn_backend(self, stream_idx: int):
         self.decode_attn_backend = self.decode_attn_backend_group[stream_idx]

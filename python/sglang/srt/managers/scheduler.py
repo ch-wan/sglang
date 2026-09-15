@@ -1331,7 +1331,6 @@ class Scheduler(
             device=self.device,
             pp_group=self.pp_group,
             world_group=self.world_group,
-            pp_rank=self.ps.pp_rank,
         )
         if sizer.profile_and_fit():
             self.dynamic_chunk_sizer = sizer
@@ -1524,7 +1523,6 @@ class Scheduler(
             self.disagg_decode_transfer_queue = DecodeTransferQueue(
                 gloo_group=self.attn_tp_cpu_group,
                 req_to_metadata_buffer_idx_allocator=self.req_to_metadata_buffer_idx_allocator,
-                tp_rank=self.ps.tp_rank,
                 metadata_buffers=self.disagg_metadata_buffers,
                 scheduler=self,
                 tree_cache=self.tree_cache,
@@ -1541,13 +1539,9 @@ class Scheduler(
                 transfer_queue=self.disagg_decode_transfer_queue,
                 tree_cache=self.tree_cache,
                 gloo_group=self.attn_tp_cpu_group,
-                tp_rank=self.ps.tp_rank,
-                tp_size=self.ps.tp_size,
-                dp_size=get_parallel().dp_size,
                 gpu_id=self.ps.gpu_id,
                 bootstrap_port=get_disagg().disaggregation_bootstrap_port,
                 max_total_num_tokens=self.max_total_num_tokens,
-                pp_rank=self.ps.pp_rank,
                 num_reserved_decode_tokens=get_disagg().num_reserved_decode_tokens,
                 transfer_backend=self.transfer_backend,
             )
@@ -1572,16 +1566,12 @@ class Scheduler(
                 draft_token_to_kv_pool=draft_token_to_kv_pool,
                 req_to_metadata_buffer_idx_allocator=self.req_to_metadata_buffer_idx_allocator,
                 metadata_buffers=self.disagg_metadata_buffers,
-                tp_rank=self.ps.tp_rank,
-                tp_size=self.ps.tp_size,
                 gpu_id=self.ps.gpu_id,
                 bootstrap_port=get_disagg().disaggregation_bootstrap_port,
                 gloo_group=self.attn_tp_cpu_group,
                 max_total_num_tokens=self.max_total_num_tokens,
                 scheduler=self,
                 scheduler_stage_metrics=self.scheduler_stage_metrics,
-                pp_rank=self.ps.pp_rank,
-                pp_size=self.ps.pp_size,
                 transfer_backend=self.transfer_backend,
             )
             # The prefill requests that are in the middle of kv sending
@@ -5740,12 +5730,7 @@ def configure_scheduler_process(
 
     # Set cpu affinity to this gpu process
     if envs.SGLANG_SET_CPU_AFFINITY.get():
-        set_gpu_proc_affinity(
-            get_parallel().pp_size,
-            get_parallel().tp_size,
-            get_parallel().nnodes,
-            gpu_id,
-        )
+        set_gpu_proc_affinity(gpu_id)
     if not envs.SGLANG_NUMA_BIND_V2.get():
         numa_node = get_numa_node_if_available(server_args, gpu_id)
         if numa_node is not None:

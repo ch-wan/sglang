@@ -67,7 +67,6 @@ class GraniteMoeHybridMambaDecoderLayer(nn.Module):
                 intermediate_size=config.intermediate_size,
                 layer_id=layer_idx,
                 quant_config=quant_config,
-                tp_size=get_parallel().tp_size,
                 prefix=f"{prefix}.block_sparse_moe",
             )
 
@@ -253,7 +252,6 @@ class GraniteMoeHybridAttentionDecoderLayer(nn.Module):
                 intermediate_size=config.intermediate_size,
                 layer_id=layer_idx,
                 quant_config=quant_config,
-                tp_size=get_parallel().tp_size,
                 prefix=f"{prefix}.block_sparse_moe",
             )
 

@@ -734,10 +734,10 @@ class DsparkStepObservers:
         planner,
         gamma: int,
         verify_num_draft_tokens: int,
-        tp_rank: int,
         device,
         simulate_acc_len: float,
     ) -> None:
+        tp_rank = get_parallel().tp_rank
         self._planner = planner
         self._gamma = int(gamma)
         self._verify_num_draft_tokens = int(verify_num_draft_tokens)

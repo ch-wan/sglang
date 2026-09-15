@@ -159,7 +159,6 @@ class EPLBManager:
                 model=self._get_model(),
                 new_expert_location_metadata=expert_location_metadata,
                 update_layer_ids=chunk_layer_ids,
-                nnodes=get_parallel().nnodes,
                 tp_rank=(
                     self._elastic_global_rank()
                     if is_post_scale_rebalance
@@ -301,7 +300,6 @@ def update_expert_location_with_recovery(
     model: nn.Module,
     new_expert_location_metadata: ExpertLocationMetadata,
     update_layer_ids: List[int],
-    nnodes: int,
     tp_rank: int,
     use_flat_topology: bool = False,
     expert_backup_client,
@@ -313,7 +311,7 @@ def update_expert_location_with_recovery(
         model.routed_experts_weights_of_layer,
         new_expert_location_metadata,
         update_layer_ids=update_layer_ids,
-        nnodes=nnodes,
+        nnodes=get_parallel().nnodes,
         rank=tp_rank,
         use_flat_topology=use_flat_topology,
     )

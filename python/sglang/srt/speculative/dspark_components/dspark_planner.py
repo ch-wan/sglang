@@ -75,10 +75,10 @@ class DSparkVerifyPlanner:
         gamma: int,
         model_runner,
         device,
-        tp_rank: int,
         verify_num_draft_tokens: int,
         tp_sync: SpecTpSync,
     ) -> None:
+        tp_rank = get_parallel().tp_rank
         self.draft_model = draft_model
         self.gamma = gamma
         self.model_runner = model_runner

@@ -1045,9 +1045,7 @@ class LogitsProcessor(nn.Module):
         logits = logits.contiguous()
         all_to_all_output = torch.empty_like(logits)
         get_tp_group().all_to_all_single(all_to_all_output.view(-1), logits.view(-1))
-        return _reassemble_tp_lm_head_all_to_all_output(
-            all_to_all_output, get_parallel().tp_size
-        )
+        return _reassemble_tp_lm_head_all_to_all_output(all_to_all_output)
 
     def _scatter_dp_attn_logits(
         self,
@@ -1208,7 +1206,7 @@ class LogitsProcessor(nn.Module):
 
 
 def _reassemble_tp_lm_head_all_to_all_output(
-    all_to_all_output: torch.Tensor, tp_size: int
+    all_to_all_output: torch.Tensor,
 ) -> torch.Tensor:
     """Convert source-major all-to-all output to row-major full-vocab logits.
 
@@ -1217,6 +1215,7 @@ def _reassemble_tp_lm_head_all_to_all_output(
     along dim 0, while the sampler expects the vocab shards concatenated along
     dim 1.
     """
+    tp_size = get_parallel().tp_size
     assert all_to_all_output.shape[0] % tp_size == 0
     local_rows = all_to_all_output.shape[0] // tp_size
     vocab_shard = all_to_all_output.shape[1]

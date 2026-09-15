@@ -651,10 +651,8 @@ class MMEncoder:
             )
             self.mm_global_cache = EmbeddingCacheController(
                 rank,
-                get_parallel().tp_size,
                 embedding_store=embedding_store,
                 hidden_dims=self._embedding_dims,
-                tp_group=get_tp_group().cpu_group,
                 all_rank_get=False,
                 dtype=self._embedding_dtype,
             )

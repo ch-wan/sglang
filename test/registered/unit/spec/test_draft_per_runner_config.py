@@ -22,7 +22,7 @@ from sglang.srt.model_executor.model_runner_components.attention_backend_setup i
 from sglang.srt.model_executor.model_runner_components.load_model_utils import (
     build_load_config,
 )
-from sglang.srt.runtime_context import get_context, get_model
+from sglang.srt.runtime_context import get_context, get_model, get_parallel
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -95,17 +95,19 @@ class TestDraftPerRunnerConfig(CustomTestCase):
         server_args = self._seed(load_format="auto")
         common = dict(
             server_args=server_args,
-            tp_rank=0,
             remote_instance_weight_transporter_engine=None,
             remote_instance_weight_transporter_session_id=None,
             draft_model_idx=None,
             weight_cache_mode="disable",
             weight_cache_socket=None,
         )
-        self.assertEqual(build_load_config(**common).load_format, "auto")
-        self.assertEqual(
-            build_load_config(load_format="dummy", **common).load_format, "dummy"
-        )
+        # `tp_rank` is the live topology, not an argument: name the width so
+        # the call resolves without distributed init.
+        with get_parallel().override(tp_rank=0):
+            self.assertEqual(build_load_config(**common).load_format, "auto")
+            self.assertEqual(
+                build_load_config(load_format="dummy", **common).load_format, "dummy"
+            )
 
     # -- the attention backend is per-runner, not a config variant -------------
 
