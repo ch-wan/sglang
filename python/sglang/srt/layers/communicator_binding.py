@@ -39,6 +39,12 @@ from sglang.srt.layers.communicator_layout import (
 from sglang.srt.runtime_context import get_forward, get_parallel
 
 
+class FFNPreparation(Enum):
+    LOCAL = auto()
+    TP_REDUCE = auto()
+    DP_GATHER = auto()
+
+
 class FFNReduction(Enum):
     COMPUTE = auto()
     POSTPROCESS = auto()
@@ -88,6 +94,7 @@ class DenseBoundaryBinding:
     """
 
     execution: FFNExecution
+    ffn_preparation: FFNPreparation
     prepare_ffn_source: BoundaryLayout
     prepare_ffn_target: BoundaryLayout
     ffn_output: BoundaryLayout
@@ -107,25 +114,11 @@ class DenseLayerBoundaryRules:
     attention_reduce_results: bool
     ffn_reduce_results: bool
 
-    def bind(
-        self,
-        forward_batch,
-        *,
-        valid_tokens: Sequence[int],
-        execution: FFNExecution,
-        physical_tokens: Sequence[int] | None = None,
-    ) -> DenseBoundaryBinding:
-        """Bind a single forward/microbatch; no D2H reads or handle caching.
-
-        Counts are in the *compute* token domain, not necessarily the original
-        scheduler batch (speculation can expand it). Physical counts default
-        to prepare_dp's padded counts; graph callers supply capture capacities.
-        """
+    def _groups(self):
         if self.attention_reduce_results or not self.ffn_reduce_results:
             raise NotImplementedError("Expected deferred O-proj and reducing down-proj")
         parallel = get_parallel()
-        flags = get_forward()
-        if parallel.attn_cp_size != 1 or flags.sp_active or flags.attn_input_scattered:
+        if parallel.attn_cp_size != 1:
             raise NotImplementedError("This adapter supports ordinary TP/DP only")
 
         tp = ParallelGroup.from_coordinator(parallel.tp_group)
@@ -142,6 +135,44 @@ class DenseLayerBoundaryRules:
             or attn_rank != parallel.attn_tp_rank
         ):
             raise ValueError("Attention groups do not match the current rank ordering")
+
+        return tp, attn_tp
+
+    def ffn_preparation(self) -> FFNPreparation:
+        """Compile the declared ordinary boundary to a supported implementation.
+
+        Group sizes are used only after validating their roles and ordered
+        membership. Runtime collectives still resolve live coordinator handles.
+        """
+        tp, attn_tp = self._groups()
+        if len(tp.ranks) > len(attn_tp.ranks):
+            return FFNPreparation.DP_GATHER
+        if len(attn_tp.ranks) > 1:
+            return FFNPreparation.TP_REDUCE
+        return FFNPreparation.LOCAL
+
+    def bind(
+        self,
+        forward_batch,
+        *,
+        valid_tokens: Sequence[int],
+        execution: FFNExecution,
+        physical_tokens: Sequence[int] | None = None,
+    ) -> DenseBoundaryBinding:
+        """Bind a single forward/microbatch; no D2H reads or handle caching.
+
+        Counts are in the *compute* token domain, not necessarily the original
+        scheduler batch (speculation can expand it). Physical counts default
+        to prepare_dp's padded counts; graph callers supply capture capacities.
+        """
+        flags = get_forward()
+        if flags.sp_active or flags.attn_input_scattered:
+            raise NotImplementedError("This adapter supports ordinary TP/DP only")
+        tp, attn_tp = self._groups()
+        rank = get_parallel().world_rank
+        tp_size = len(attn_tp.ranks)
+        dp_size = len(tp.ranks) // tp_size
+        dp_rank, attn_rank = divmod(tp.ranks.index(rank), tp_size)
 
         valid = tuple(valid_tokens)
         if physical_tokens is None:
@@ -232,6 +263,7 @@ class DenseLayerBoundaryRules:
         ffn_output = boundary(ffn(partial=reduction is not FFNReduction.COMPUTE))
         return DenseBoundaryBinding(
             execution=execution,
+            ffn_preparation=self.ffn_preparation(),
             prepare_ffn_source=boundary(attention(partial=True)),
             prepare_ffn_target=boundary(ffn()),
             ffn_output=ffn_output,

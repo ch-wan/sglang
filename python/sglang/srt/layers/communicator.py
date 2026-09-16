@@ -37,6 +37,10 @@ from sglang.srt.layers.attention.dsa.utils import (
     is_dsa_enable_prefill_cp,
 )
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateAccumulator
+from sglang.srt.layers.communicator_binding import (
+    DenseLayerBoundaryRules,
+    FFNPreparation,
+)
 from sglang.srt.layers.cp.utils import (
     is_mla_cp_active,
     is_mla_cp_enabled,
@@ -529,6 +533,7 @@ class LayerCommunicator:
         enable_fused_ar_quant: bool = False,
         fused_ar_quant_keep_bf16: bool = False,
         _is_sp_variant: bool = False,
+        boundary_rules: Optional[DenseLayerBoundaryRules] = None,
     ):
         self.layer_scatter_modes = layer_scatter_modes
         self.input_layernorm = input_layernorm
@@ -545,6 +550,29 @@ class LayerCommunicator:
             force_layernorm_before_dp_gather
         )
         self._post_init_communicate()
+        self._ffn_preparation = None
+        self._prepare_ffn_fn = None
+        # Only the declared ordinary boundary uses the new selector. Specialized
+        # modes and unadapted models retain their existing communicator adapter.
+        if (
+            boundary_rules is not None
+            and type(self) is LayerCommunicator
+            and self._context.attn_cp_size == 1
+            and layer_scatter_modes
+            == LayerScatterModes(
+                layer_input_mode=ScatterMode.TP_ATTN_FULL,
+                attn_mode=ScatterMode.TP_ATTN_FULL,
+                mlp_mode=ScatterMode.FULL,
+                middle_residual_mode=ScatterMode.TP_ATTN_FULL,
+                layer_output_mode=ScatterMode.TP_ATTN_FULL,
+            )
+        ):
+            self._ffn_preparation = boundary_rules.ffn_preparation()
+            self._prepare_ffn_fn = {
+                FFNPreparation.LOCAL: PrepareFFN.local,
+                FFNPreparation.TP_REDUCE: PrepareFFN.reduce_tp,
+                FFNPreparation.DP_GATHER: PrepareFFN.gather_dp,
+            }[self._ffn_preparation]
         self._speculative_algo = SpeculativeAlgorithm.from_string(
             get_spec().speculative_algorithm
         )
@@ -635,19 +663,22 @@ class LayerCommunicator:
 
         Only the flashinfer all-reduce-fusion path writes a fresh ``residual_out``
         (see ``flashinfer_allreduce_residual_rmsnorm``); the aiter fused kernel and
-        every plain norm fold into ``residual`` in place. That path is reachable
-        only from the ``_gather_*`` communicate-fns, and only when they fall past
-        their input-scattered branch.
+        every plain norm fold into ``residual`` in place. The ordinary TP
+        preparation and legacy ``_gather_*`` adapters can reach that path;
+        input-scattered preparation cannot.
         """
-        norm_fn = getattr(
-            self._communicate_with_all_reduce_and_layer_norm_fn,
-            "func",
-            self._communicate_with_all_reduce_and_layer_norm_fn,
-        )
-        uses_gather_norm = norm_fn in (
-            CommunicateWithAllReduceAndLayerNormFn._gather_hidden_states_and_residual,
-            CommunicateWithAllReduceAndLayerNormFn._gather_hidden_states_and_residual_moe,
-        )
+        if self._ffn_preparation is not None:
+            uses_gather_norm = self._ffn_preparation is not FFNPreparation.LOCAL
+        else:
+            norm_fn = getattr(
+                self._communicate_with_all_reduce_and_layer_norm_fn,
+                "func",
+                self._communicate_with_all_reduce_and_layer_norm_fn,
+            )
+            uses_gather_norm = norm_fn in (
+                CommunicateWithAllReduceAndLayerNormFn._gather_hidden_states_and_residual,
+                CommunicateWithAllReduceAndLayerNormFn._gather_hidden_states_and_residual_moe,
+            )
         return (
             uses_gather_norm
             and not get_attn_tp_context().input_scattered
@@ -871,7 +902,13 @@ class LayerCommunicator:
         if cache is not None:
             self._context.cache = cache
 
-        return self._communicate_with_all_reduce_and_layer_norm_fn(
+        prepare = self._communicate_with_all_reduce_and_layer_norm_fn
+        if (
+            self._prepare_ffn_fn is not None
+            and not get_attn_tp_context().input_scattered
+        ):
+            prepare = self._prepare_ffn_fn
+        return prepare(
             hidden_states=hidden_states,
             residual=residual,
             forward_batch=forward_batch,
@@ -1098,6 +1135,103 @@ class CommunicateSimpleFn:
         return hidden_states
 
 
+class PrepareFFN:
+    """Ordinary attention partial -> dense FFN replica preparation.
+
+    The source residual is complete in the attention token layout. DP gather
+    expands only hidden states; residual remains local. All kernels and policy
+    gates are shared with the legacy adapter below.
+    """
+
+    @staticmethod
+    def local(
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor,
+        forward_batch: ForwardBatch,
+        layernorm: torch.nn.Module,
+        context: CommunicateContext,
+    ):
+        # Preserve the empty-input behavior of the existing norm path.
+        if hidden_states.shape[0] != 0:
+            hidden_states, residual = layernorm(hidden_states, residual)
+        return hidden_states, residual
+
+    @staticmethod
+    def reduce_tp(
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor,
+        forward_batch: ForwardBatch,
+        layernorm: torch.nn.Module,
+        context: CommunicateContext,
+    ):
+        handled = False
+        if (
+            apply_aiter_all_reduce_fusion(hidden_states)
+            or apply_flashinfer_allreduce_fusion(hidden_states.shape[0])
+        ) and hasattr(layernorm, "forward_with_allreduce_fusion"):
+            hidden_states, residual = layernorm.forward_with_allreduce_fusion(
+                hidden_states, residual, use_attn_tp_group=True
+            )
+            handled = True
+
+        if not handled:
+            quantize_communications = (
+                not forward_batch.forward_mode.is_decode_or_idle()
+                and get_exec().comm.enable_quant_communications
+            )
+            if quantize_communications:
+                hidden_states = attention_tensor_model_parallel_quant_all_reduce(
+                    hidden_states
+                )
+            else:
+                hidden_states = attention_tensor_model_parallel_all_reduce(
+                    hidden_states
+                )
+            if _is_npu and context.cache is not None:
+                _ = prepare_weight_cache(hidden_states, context.cache)
+            hidden_states, residual = layernorm(hidden_states, residual)
+        return hidden_states, residual
+
+    @staticmethod
+    def gather_dp(
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor,
+        forward_batch: ForwardBatch,
+        layernorm: torch.nn.Module,
+        context: CommunicateContext,
+    ):
+        use_layer_norm_before_gather = (
+            context.force_layernorm_before_dp_gather or context.attn_tp_size == 1
+        )
+        if use_layer_norm_before_gather and hidden_states.shape[0] != 0:
+            if context.attn_tp_size > 1:
+                hidden_states = attention_tensor_model_parallel_all_reduce(
+                    hidden_states
+                )
+            with use_symmetric_memory(
+                get_tp_group(),
+                disabled=not is_allocation_symmetric(),
+            ):
+                hidden_states, residual = layernorm(hidden_states, residual)
+        elif context.attn_tp_rank == 0:
+            hidden_states += residual
+
+        hidden_states, local_hidden_states = (
+            get_global_dp_buffer(get_tp_group()),
+            hidden_states,
+        )
+        if use_layer_norm_before_gather:
+            dp_gather_replicate(hidden_states, local_hidden_states, forward_batch)
+        else:
+            dp_gather_partial(hidden_states, local_hidden_states, forward_batch)
+
+        if not use_layer_norm_before_gather:
+            dp_scatter(residual, hidden_states, forward_batch)
+            if hidden_states.shape[0] != 0:
+                hidden_states = layernorm(hidden_states)
+        return hidden_states, residual
+
+
 class CommunicateWithAllReduceAndLayerNormFn:
     """Besides communication, needs to
     1. All reduce in tp_attn_group on hidden_states
@@ -1206,10 +1340,9 @@ class CommunicateWithAllReduceAndLayerNormFn:
         layernorm: torch.nn.Module,
         context: CommunicateContext,
     ):
-        # TODO move these `if shape != 0` into LayerNorm itself
-        if hidden_states.shape[0] != 0:
-            hidden_states, residual = layernorm(hidden_states, residual)
-        return hidden_states, residual
+        return PrepareFFN.local(
+            hidden_states, residual, forward_batch, layernorm, context
+        )
 
     @staticmethod
     def _tp_attn_all_reduce_and_layernorm(
@@ -1254,64 +1387,10 @@ class CommunicateWithAllReduceAndLayerNormFn:
                 residual,
             )
             attn_tp_all_gather_into_tensor(residual, local_residual)
-        if context.attn_dp_size != 1:
-            use_layer_norm_before_gather = (
-                context.force_layernorm_before_dp_gather or context.attn_tp_size == 1
-            )
-            if use_layer_norm_before_gather and hidden_states.shape[0] != 0:
-                if context.attn_tp_size > 1:
-                    hidden_states = attention_tensor_model_parallel_all_reduce(
-                        hidden_states
-                    )
-                with use_symmetric_memory(
-                    get_tp_group(),
-                    disabled=not is_allocation_symmetric(),
-                ):
-                    hidden_states, residual = layernorm(hidden_states, residual)
-            elif context.attn_tp_rank == 0:
-                hidden_states += residual
-
-            hidden_states, local_hidden_states = (
-                get_global_dp_buffer(get_tp_group()),
-                hidden_states,
-            )
-            if use_layer_norm_before_gather:
-                dp_gather_replicate(hidden_states, local_hidden_states, forward_batch)
-            else:
-                dp_gather_partial(hidden_states, local_hidden_states, forward_batch)
-
-            if not use_layer_norm_before_gather:
-                dp_scatter(residual, hidden_states, forward_batch)
-                if hidden_states.shape[0] != 0:
-                    hidden_states = layernorm(hidden_states)
-        else:
-            handled = False
-            if (
-                apply_aiter_all_reduce_fusion(hidden_states)
-                or apply_flashinfer_allreduce_fusion(hidden_states.shape[0])
-            ) and hasattr(layernorm, "forward_with_allreduce_fusion"):
-                hidden_states, residual = layernorm.forward_with_allreduce_fusion(
-                    hidden_states, residual, use_attn_tp_group=True
-                )
-                handled = True
-
-            if not handled:
-                quantize_communications = (
-                    not forward_batch.forward_mode.is_decode_or_idle()
-                    and get_exec().comm.enable_quant_communications
-                )
-                if quantize_communications:
-                    hidden_states = attention_tensor_model_parallel_quant_all_reduce(
-                        hidden_states
-                    )
-                else:
-                    hidden_states = attention_tensor_model_parallel_all_reduce(
-                        hidden_states
-                    )
-                if _is_npu and context.cache is not None:
-                    _ = prepare_weight_cache(hidden_states, context.cache)
-                hidden_states, residual = layernorm(hidden_states, residual)
-        return hidden_states, residual
+        prepare = (
+            PrepareFFN.gather_dp if context.attn_dp_size != 1 else PrepareFFN.reduce_tp
+        )
+        return prepare(hidden_states, residual, forward_batch, layernorm, context)
 
     @staticmethod
     def _scatter_hidden_states_and_residual(

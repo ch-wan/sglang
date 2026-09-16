@@ -395,6 +395,7 @@ class Qwen3DecoderLayer(nn.Module):
             layer_scatter_modes=self.layer_scatter_modes,
             input_layernorm=self.input_layernorm,
             post_attention_layernorm=self.post_attention_layernorm,
+            boundary_rules=self.boundary_rules,
         )
 
     def bind_boundary_layouts(
