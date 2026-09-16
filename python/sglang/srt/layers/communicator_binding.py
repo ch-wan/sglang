@@ -13,7 +13,8 @@
 """Host-side binding for ordinary dense TP/DP preparation boundaries.
 
 Binding is explicit and on demand, outside compiled forwards and CUDA capture.
-It neither selects collectives nor stores a current layout on a global context.
+Rules select supported boundary implementations; binding stores no current
+layout on a global context.
 A caller must carry the producer's execution decision past its flag scope.
 """
 
@@ -43,6 +44,20 @@ class FFNPreparation(Enum):
     LOCAL = auto()
     TP_REDUCE = auto()
     DP_GATHER = auto()
+
+
+class AttentionBoundary(Enum):
+    """The two execution positions of one FFN-to-attention transition.
+
+    LOCAL/SCATTER hand off complete values; REDUCE_SCATTER completes the sum
+    in postprocess; REDUCE leaves it for the next preparation. No residual
+    addition belongs in postprocess for these ordinary dense boundaries.
+    """
+
+    LOCAL = auto()
+    SCATTER = auto()
+    REDUCE_SCATTER = auto()
+    REDUCE = auto()
 
 
 class FFNReduction(Enum):
@@ -95,11 +110,26 @@ class DenseBoundaryBinding:
 
     execution: FFNExecution
     ffn_preparation: FFNPreparation
+    attention_boundary: AttentionBoundary
     prepare_ffn_source: BoundaryLayout
     prepare_ffn_target: BoundaryLayout
     ffn_output: BoundaryLayout
     prepare_attn_source: BoundaryLayout
     prepare_attn_target: BoundaryLayout
+
+    def attention_input(self, residual_state: ResidualState) -> BoundaryLayout:
+        """Describe a caller-declared embedding, merged, or separate handoff.
+
+        None at runtime does not distinguish an embedding from a merged sum.
+        Neither can inherit a producer's unfinished FFN reduction.
+        """
+        if residual_state is ResidualState.SEPARATE:
+            return self.prepare_attn_source
+        if residual_state not in (ResidualState.ABSENT, ResidualState.MERGED):
+            raise ValueError("Expected an explicit residual state")
+        if self.attention_boundary is AttentionBoundary.REDUCE:
+            raise ValueError("An unfinished FFN sum requires its separate residual")
+        return BoundaryLayout(self.prepare_attn_source.hidden, residual_state)
 
 
 @dataclass(frozen=True)
@@ -150,6 +180,22 @@ class DenseLayerBoundaryRules:
         if len(attn_tp.ranks) > 1:
             return FFNPreparation.TP_REDUCE
         return FFNPreparation.LOCAL
+
+    def attention_boundary(self, execution: FFNExecution) -> AttentionBoundary:
+        """Resolve the producer and consumer halves from the same decision."""
+        tp, attn_tp = self._groups()
+        has_dp = len(tp.ranks) > len(attn_tp.ranks)
+        if execution.reduction is FFNReduction.NEXT_PREPARE:
+            if has_dp:
+                raise NotImplementedError(
+                    "Deferred fusion does not support DP attention"
+                )
+            return AttentionBoundary.REDUCE
+        if execution.reduction is FFNReduction.POSTPROCESS:
+            if not has_dp:
+                raise NotImplementedError("Postprocess reduction requires DP attention")
+            return AttentionBoundary.REDUCE_SCATTER
+        return AttentionBoundary.SCATTER if has_dp else AttentionBoundary.LOCAL
 
     def bind(
         self,
@@ -264,6 +310,7 @@ class DenseLayerBoundaryRules:
         return DenseBoundaryBinding(
             execution=execution,
             ffn_preparation=self.ffn_preparation(),
+            attention_boundary=self.attention_boundary(execution),
             prepare_ffn_source=boundary(attention(partial=True)),
             prepare_ffn_target=boundary(ffn()),
             ffn_output=ffn_output,

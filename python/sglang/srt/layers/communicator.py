@@ -38,7 +38,9 @@ from sglang.srt.layers.attention.dsa.utils import (
 )
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateAccumulator
 from sglang.srt.layers.communicator_binding import (
+    AttentionBoundary,
     DenseLayerBoundaryRules,
+    FFNExecution,
     FFNPreparation,
 )
 from sglang.srt.layers.cp.utils import (
@@ -519,6 +521,18 @@ def tp_reduce_scatter(
     return output, residual
 
 
+def scatter_attention_input(hidden_states, forward_batch, context):
+    """Complete FFN values -> local attention tokens; residual stays local."""
+    buffer_group = (
+        get_tp_group()
+        if context.tp_size == context.attn_dp_size
+        else get_parallel().attn_tp_group
+    )
+    local_hidden_states = get_local_dp_buffer(group=buffer_group)
+    dp_scatter(local_hidden_states, hidden_states, forward_batch)
+    return local_hidden_states
+
+
 class LayerCommunicator:
     def __init__(
         self,
@@ -552,6 +566,7 @@ class LayerCommunicator:
         self._post_init_communicate()
         self._ffn_preparation = None
         self._prepare_ffn_fn = None
+        self._attention_boundary = None
         # Only the declared ordinary boundary uses the new selector. Specialized
         # modes and unadapted models retain their existing communicator adapter.
         if (
@@ -567,6 +582,12 @@ class LayerCommunicator:
                 layer_output_mode=ScatterMode.TP_ATTN_FULL,
             )
         ):
+            # The ordinary Qwen3 producer completes its down-proj sum. Its
+            # adjacent consumer accepts the same complete, attention-local pair.
+            # Dynamic/deferred producers retain their legacy adapter for now.
+            if allow_reduce_scatter:
+                raise ValueError("Dense rules require a completed FFN reduction")
+            self._attention_boundary = boundary_rules.attention_boundary(FFNExecution())
             self._ffn_preparation = boundary_rules.ffn_preparation()
             self._prepare_ffn_fn = {
                 FFNPreparation.LOCAL: PrepareFFN.local,
@@ -716,14 +737,50 @@ class LayerCommunicator:
                 hidden_states,
                 residual,
             )
+        ordinary = (
+            self._attention_boundary is not None
+            and not get_attn_tp_context().input_scattered
+        )
+        # Only the compatibility adapter interprets the old producer marker.
+        # A migrated complete handoff never re-reads the consumer's FFN flags.
+        needs_allreduce = not ordinary and getattr(
+            hidden_states, "_sglang_needs_allreduce_fusion", False
+        )
+        hidden_states, residual = self._prepare_attn_norm(
+            hidden_states,
+            residual,
+            quant_format,
+            post_residual_addition,
+            needs_allreduce=needs_allreduce,
+        )
+
+        if not ordinary:
+            hidden_states = self._communicate_simple_fn(
+                hidden_states=hidden_states,
+                forward_batch=forward_batch,
+                context=self._context,
+            )
+        if self.qkv_latent_func is not None:
+            attn_inputs = AttentionInputs(
+                hidden_states, forward_batch, self.qkv_latent_func
+            )
+            get_attn_tp_context().set_attn_inputs(attn_inputs)
+        return hidden_states, residual
+
+    def _prepare_attn_norm(
+        self,
+        hidden_states,
+        residual,
+        quant_format,
+        post_residual_addition,
+        *,
+        needs_allreduce,
+    ):
+        """Shared norm/quant implementation; the caller supplies value readiness."""
         if hidden_states.shape[0] == 0:
             residual = hidden_states
         else:
-            if (
-                residual is not None
-                and hasattr(hidden_states, "_sglang_needs_allreduce_fusion")
-                and hidden_states._sglang_needs_allreduce_fusion
-            ):
+            if residual is not None and needs_allreduce:
                 if (
                     apply_aiter_all_reduce_fusion(hidden_states)
                     or apply_flashinfer_allreduce_fusion(hidden_states.shape[0])
@@ -869,16 +926,6 @@ class LayerCommunicator:
                             post_residual_addition,
                         )
 
-        hidden_states = self._communicate_simple_fn(
-            hidden_states=hidden_states,
-            forward_batch=forward_batch,
-            context=self._context,
-        )
-        if self.qkv_latent_func is not None:
-            attn_inputs = AttentionInputs(
-                hidden_states, forward_batch, self.qkv_latent_func
-            )
-            get_attn_tp_context().set_attn_inputs(attn_inputs)
         return hidden_states, residual
 
     def _tp_reduce_scatter(
@@ -933,6 +980,17 @@ class LayerCommunicator:
             return self._sp_variant.postprocess_layer(
                 hidden_states, residual, forward_batch
             )
+        if (
+            self._attention_boundary is not None
+            and not get_attn_tp_context().input_scattered
+        ):
+            if self._attention_boundary is AttentionBoundary.SCATTER:
+                # The producer already reduced. Move tokens without consulting
+                # MoE reduction policy or adding the local residual again.
+                hidden_states = scatter_attention_input(
+                    hidden_states, forward_batch, self._context
+                )
+            return hidden_states, residual
         return self._communicate_summable_tensor_pair_fn(
             hidden_states=hidden_states,
             residual=residual,
