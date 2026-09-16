@@ -8,7 +8,15 @@ from torch import nn
 from sglang.srt.distributed import (
     get_pp_group,
 )
-from sglang.srt.layers.communicator import LayerCommunicator, LayerScatterModes
+from sglang.srt.layers.communicator import (
+    LayerCommunicator,
+    LayerScatterModes,
+    ScatterMode,
+)
+from sglang.srt.layers.communicator_binding import (
+    DenseLayerBoundaryRules,
+    FFNExecution,
+)
 from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.layers.linear import QKVParallelLinear, RowParallelLinear
 from sglang.srt.layers.logits_processor import LogitsProcessor
@@ -379,10 +387,55 @@ class Qwen3DecoderLayer(nn.Module):
             is_previous_layer_sparse=False,
             is_next_layer_sparse=False,
         )
+        self.boundary_rules = DenseLayerBoundaryRules(
+            attention_reduce_results=self.self_attn.o_proj.reduce_results,
+            ffn_reduce_results=self.mlp.down_proj.reduce_results,
+        )
         self.layer_communicator = LayerCommunicator(
             layer_scatter_modes=self.layer_scatter_modes,
             input_layernorm=self.input_layernorm,
             post_attention_layernorm=self.post_attention_layernorm,
+        )
+
+    def bind_boundary_layouts(
+        self, forward_batch, *, valid_tokens, physical_tokens=None
+    ):
+        """Describe ordinary boundaries on demand, outside forward/capture.
+
+        Qwen3 currently completes down-proj reduction inside the MLP. It does
+        not publish delayed-reduction flags or skip postprocess for fusion.
+        """
+        modes = self.layer_scatter_modes
+        if modes != LayerScatterModes(
+            layer_input_mode=ScatterMode.TP_ATTN_FULL,
+            attn_mode=ScatterMode.TP_ATTN_FULL,
+            mlp_mode=ScatterMode.FULL,
+            middle_residual_mode=ScatterMode.TP_ATTN_FULL,
+            layer_output_mode=ScatterMode.TP_ATTN_FULL,
+        ):
+            raise NotImplementedError("Qwen3 boundary binding supports ordinary TP/DP")
+        if (
+            self.self_attn.o_proj.use_decode_attn_tp
+            or self.mlp.down_proj.use_decode_attn_tp
+            or self.mlp.down_proj.use_dp_attention_reduce
+        ):
+            raise NotImplementedError(
+                "Projection group overrides require their own adapter"
+            )
+        if (
+            self.self_attn.o_proj.tp_size != get_parallel().attn_tp_size
+            or self.mlp.down_proj.tp_size != get_parallel().tp_size
+        ):
+            raise ValueError(
+                "Projection widths differ from the current parallel groups"
+            )
+        if FFNExecution.capture() != FFNExecution():
+            raise ValueError("Qwen3 has no delayed-reduction handoff")
+        return self.boundary_rules.bind(
+            forward_batch,
+            valid_tokens=valid_tokens,
+            physical_tokens=physical_tokens,
+            execution=FFNExecution(),
         )
 
     def forward(
