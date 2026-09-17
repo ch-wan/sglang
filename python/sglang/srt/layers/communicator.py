@@ -999,6 +999,18 @@ class LayerCommunicator:
             allow_reduce_scatter=self.allow_reduce_scatter,
         )
 
+    def postprocess_completed_ffn(self, hidden_states, residual, forward_batch):
+        """Ordinary global complete values; only token ownership may change.
+
+        An adapted producer calls this after completing all its reductions.
+        It must not use the legacy partial-value reduction policy again.
+        """
+        if self._context.attn_dp_size > 1:
+            hidden_states = scatter_attention_input(
+                hidden_states, forward_batch, self._context
+            )
+        return hidden_states, residual
+
     def should_use_reduce_scatter(self, forward_batch: ForwardBatch):
         if not self.allow_reduce_scatter:
             return False

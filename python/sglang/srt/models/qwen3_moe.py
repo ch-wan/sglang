@@ -34,7 +34,13 @@ from sglang.srt.distributed import (
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
-from sglang.srt.layers.communicator import LayerCommunicator, LayerScatterModes
+from sglang.srt.layers.communicator import (
+    LayerCommunicator,
+    LayerScatterModes,
+    ScatterMode,
+    get_attn_tp_context,
+)
+from sglang.srt.layers.communicator_binding import FFNReduction
 from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.layers.linear import (
     QKVParallelLinear,
@@ -45,7 +51,10 @@ from sglang.srt.layers.logits_processor import LogitsProcessor
 from sglang.srt.layers.moe import (
     get_moe_a2a_backend,
     should_skip_post_experts_all_reduce,
+    should_use_dp_reduce_scatterv,
+    should_use_flashinfer_cutlass_moe_fp4_allgather,
 )
+from sglang.srt.layers.moe.communicator import MoEBoundaryPlan, MoEOutput
 from sglang.srt.layers.moe.ep_moe.layer import get_moe_impl_class
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
 from sglang.srt.layers.moe.topk import TopK
@@ -300,15 +309,19 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         self,
         hidden_states: torch.Tensor,
         forward_batch: Optional[ForwardBatch] = None,
+        *,
+        boundary_plan: Optional[MoEBoundaryPlan] = None,
     ) -> torch.Tensor:
 
         if (
             not is_deepep_class_backend()
             and not get_moe_a2a_backend().is_ascend_fuseep()
         ):
-            return self.forward_normal(hidden_states)
+            output = self.forward_normal(hidden_states)
         else:
-            return self.forward_deepep(hidden_states, forward_batch)
+            output = self.forward_deepep(hidden_states, forward_batch)
+        # The wrapper completes expert contributions before exposing its exit.
+        return output if boundary_plan is None else boundary_plan.finish(output)
 
     def get_moe_weights(self):
         return [
@@ -832,6 +845,47 @@ class Qwen3MoeDecoderLayer(nn.Module):
             is_last_layer=(self.layer_id == self.config.num_hidden_layers - 1),
         )
 
+    def plan_moe_boundary(self, *, fuse_next, reduce_scatter):
+        """Select only the ordinary, audited MoE output contracts.
+
+        Mellum's dense layers and special/overlapped adapters keep their old
+        entry points. This method is also inherited by Qwen3-VL/InternS1Pro.
+        """
+        parallel = get_parallel()
+        if (
+            not self.is_layer_sparse
+            or parallel.attn_cp_size != 1
+            or parallel.moe_dp_size != 1
+            or parallel.dwdp_size > 1
+            or get_forward().sp_active
+            or get_attn_tp_context().input_scattered
+            or should_use_flashinfer_cutlass_moe_fp4_allgather()
+        ):
+            return None
+        backend = get_moe_a2a_backend()
+        scattered = not backend.is_none()
+        if scattered and (
+            parallel.moe_tp_size != 1
+            or not (
+                is_deepep_class_backend()
+                or backend.is_ascend_fuseep()
+                or backend.is_flashinfer()
+                or backend.is_pplx()
+                or backend.is_flashinfer_megamoe()
+            )
+        ):
+            return None
+        expected_mode = ScatterMode.SCATTERED if scattered else ScatterMode.FULL
+        if self.layer_scatter_modes.mlp_mode is not expected_mode:
+            return None
+        return MoEBoundaryPlan.select(
+            ep_size=parallel.moe_ep_size,
+            scattered=scattered,
+            fuse_next=fuse_next,
+            reduce_scatter=reduce_scatter,
+            reduce_scatterv=should_use_dp_reduce_scatterv(),
+        )
+
     def forward(
         self,
         positions: torch.Tensor,
@@ -874,11 +928,31 @@ class Qwen3MoeDecoderLayer(nn.Module):
             forward_batch
         )
 
-        with get_forward().scoped(
-            fuse_mlp_allreduce=fuse_mlp_allreduce,
-            mlp_reduce_scatter=mlp_reduce_scatter,
-        ):
-            hidden_states = self.mlp(hidden_states, forward_batch)
+        plan = self.plan_moe_boundary(
+            fuse_next=fuse_mlp_allreduce, reduce_scatter=mlp_reduce_scatter
+        )
+        if plan is None:
+            with get_forward().scoped(
+                fuse_mlp_allreduce=fuse_mlp_allreduce,
+                mlp_reduce_scatter=mlp_reduce_scatter,
+            ):
+                hidden_states = self.mlp(hidden_states, forward_batch)
+
+        else:
+            with plan.scope():
+                hidden_states = self.mlp(
+                    hidden_states, forward_batch, boundary_plan=plan
+                )
+            if plan.output is MoEOutput.ATTENTION_LOCAL:
+                return hidden_states, residual
+            if (
+                plan.output is MoEOutput.GLOBAL
+                and plan.ffn.reduction is FFNReduction.COMPUTE
+            ):
+                return self.layer_communicator.postprocess_completed_ffn(
+                    hidden_states, residual, forward_batch
+                )
+            fuse_mlp_allreduce = plan.ffn.reduction is FFNReduction.NEXT_PREPARE
 
         if fuse_mlp_allreduce:
             hidden_states._sglang_needs_allreduce_fusion = True
