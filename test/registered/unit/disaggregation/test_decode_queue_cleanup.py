@@ -71,7 +71,11 @@ class TestDecodeQueueCleanup(CustomTestCase):
         queue.retracted_queue = reqs.copy()
         queue.num_reserved_decode_tokens = 0
         queue.req_to_token_pool = SimpleNamespace(available_size=lambda: len(reqs))
-        queue.token_to_kv_pool_allocator = SimpleNamespace(page_size=page_size)
+        queue.token_to_kv_pool_allocator = SimpleNamespace(
+            page_size=page_size,
+            # Static pool: the two sides own separate buffers.
+            supports_joint_byte_reservation=lambda: False,
+        )
         queue.tree_cache = MagicMock()
         queue.scheduler = SimpleNamespace(
             sliding_window_size=2047,
@@ -123,6 +127,12 @@ class TestDecodeQueueCleanup(CustomTestCase):
         queue.retracted_queue = []
         queue._resolve_pending_reqs = MagicMock()
         queue._uses_swa_tail_prealloc = MagicMock(return_value=False)
+        # Static pool: the two sides own separate buffers. Reached because
+        # `_uses_swa_reservation` consults the allocator once tail prealloc
+        # is off, so the queue needs one even on this abort path.
+        queue.token_to_kv_pool_allocator = SimpleNamespace(
+            supports_joint_byte_reservation=lambda: False
+        )
         queue._allocatable_token_budgets = MagicMock(return_value=0)
         queue._hicache_pending_restore_tokens = MagicMock(return_value=0)
 
@@ -178,6 +188,12 @@ class TestDecodeQueueCleanup(CustomTestCase):
         queue._resolve_pending_reqs = MagicMock()
         queue._update_handshake_waiters = MagicMock()
         queue._uses_swa_tail_prealloc = MagicMock(return_value=False)
+        # Static pool: the two sides own separate buffers. Reached because
+        # `_uses_swa_reservation` consults the allocator once tail prealloc
+        # is off, so the queue needs one even on this abort path.
+        queue.token_to_kv_pool_allocator = SimpleNamespace(
+            supports_joint_byte_reservation=lambda: False
+        )
         queue._allocatable_token_budgets = MagicMock(return_value=0)
         queue._hicache_pending_restore_tokens = MagicMock(return_value=0)
 
@@ -238,6 +254,10 @@ class TestDecodeQueueCleanup(CustomTestCase):
         queue._hicache_pending_restore_tokens = MagicMock(return_value=0)
         queue._pre_alloc = MagicMock()
         queue.token_to_kv_pool_allocator = MagicMock()
+        # Static pool: FULL and SWA own separate buffers, so their token
+        # counts are checked independently. A bare MagicMock would answer
+        # truthy and silently route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator.supports_joint_byte_reservation.return_value = False
         queue.req_to_token_pool = MagicMock()
         queue.req_to_token_pool.available_size.return_value = 1
         queue.req_to_metadata_buffer_idx_allocator = MagicMock()

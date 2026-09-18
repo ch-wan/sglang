@@ -126,7 +126,11 @@ class TestDecodeLockRefScenarios(unittest.TestCase):
             sliding_window_size=127,
             server_args=SimpleNamespace(),
         )
-        queue.token_to_kv_pool_allocator = MagicMock(page_size=64)
+        # Static pool: FULL and SWA own separate buffers. A bare MagicMock
+        # answers truthy and would route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator = MagicMock(
+            page_size=64, supports_joint_byte_reservation=lambda: False
+        )
 
         tail_len = queue._swa_tail_len(895)
 
@@ -145,6 +149,10 @@ class TestDecodeLockRefScenarios(unittest.TestCase):
         queue._need_space_for_single_req = MagicMock(return_value=0)
         queue._active_req_count = MagicMock(return_value=1)
         queue.token_to_kv_pool_allocator = MagicMock()
+        # Static pool: FULL and SWA own separate buffers, so their token
+        # counts are checked independently. A bare MagicMock would answer
+        # truthy and silently route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator.supports_joint_byte_reservation.return_value = False
         queue.token_to_kv_pool_allocator.size_swa = 256
         queue.token_to_kv_pool_allocator.swa_available_size.return_value = 0
         queue.tree_cache = MagicMock()
@@ -160,7 +168,11 @@ class TestDecodeLockRefScenarios(unittest.TestCase):
 
     def test_reclaim_swa_tail_capacity_page_rounds(self):
         queue = DecodePreallocQueue.__new__(DecodePreallocQueue)
-        queue.token_to_kv_pool_allocator = MagicMock(page_size=64)
+        # Static pool: FULL and SWA own separate buffers. A bare MagicMock
+        # answers truthy and would route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator = MagicMock(
+            page_size=64, supports_joint_byte_reservation=lambda: False
+        )
         queue.token_to_kv_pool_allocator.swa_available_size.side_effect = [64, 192]
         queue.tree_cache = MagicMock()
 
@@ -173,7 +185,11 @@ class TestDecodeLockRefScenarios(unittest.TestCase):
 
     def test_reclaim_swa_tail_capacity_fails_before_allocation(self):
         queue = DecodePreallocQueue.__new__(DecodePreallocQueue)
-        queue.token_to_kv_pool_allocator = MagicMock(page_size=64)
+        # Static pool: FULL and SWA own separate buffers. A bare MagicMock
+        # answers truthy and would route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator = MagicMock(
+            page_size=64, supports_joint_byte_reservation=lambda: False
+        )
         queue.token_to_kv_pool_allocator.swa_available_size.side_effect = [64, 128]
         queue.tree_cache = MagicMock()
 
@@ -436,6 +452,10 @@ class TestDecodeLockRefScenarios(unittest.TestCase):
         queue.req_to_metadata_buffer_idx_allocator.available_size.return_value = 1
         queue.token_to_kv_pool = MagicMock()
         queue.token_to_kv_pool_allocator = MagicMock()
+        # Static pool: FULL and SWA own separate buffers, so their token
+        # counts are checked independently. A bare MagicMock would answer
+        # truthy and silently route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator.supports_joint_byte_reservation.return_value = False
         queue.token_to_kv_pool_allocator.page_size = 4
 
         running_batch = MagicMock()

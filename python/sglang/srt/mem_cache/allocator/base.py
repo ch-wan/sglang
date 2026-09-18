@@ -95,6 +95,15 @@ class BaseTokenToKVPoolAllocator(abc.ABC):
             0, min(max_new_tokens, token_capacity - paged_input - self.page_size - 1)
         )
 
+    def supports_joint_byte_reservation(self) -> bool:
+        """Whether `can_reserve` prices FULL and SWA against ONE byte budget.
+
+        False where the two sides own separate buffers, so a caller must check
+        each against its own token budget. A composite that delegates
+        allocation must forward this rather than answer for a pool it owns.
+        """
+        return False
+
     def evict_to_free_tokens(self, tree_cache, num_tokens: int) -> bool | None:
         """Evict unlocked prefix-cache entries until this allocator can serve
         ``num_tokens`` or nothing evictable remains.

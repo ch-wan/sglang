@@ -1460,5 +1460,109 @@ class TestFloatHoleCreditIsPerSide(unittest.TestCase):
         self.assertEqual(flt._byte_accounting_violations(), [])
 
 
+class TestJointByteReservationIsTheAllocatorsAnswer(unittest.TestCase):
+    """The capability is declared by the pool, not inferred by the scheduler.
+
+    REGRESSION: an `isinstance` in `DecodePreallocQueue` named only the
+    two-pool sibling, so the tri-pool stayed on a per-side token check.
+    """
+
+    def _build(self, **kw):
+        return TestUnifiedTriPool._build(self, **kw)
+
+    def test_default_is_false_and_every_unified_swa_layout_opts_in(self):
+        from sglang.srt.mem_cache.allocator.base import BaseTokenToKVPoolAllocator
+
+        # Ignores `self`: a pool whose sides own separate buffers says False.
+        self.assertFalse(
+            BaseTokenToKVPoolAllocator.supports_joint_byte_reservation(None)
+        )
+        _, allocator, _, _ = self._build()
+        self.assertTrue(allocator.supports_joint_byte_reservation())
+
+    def test_empty_pool_probes_the_ceiling_not_the_current_state(self):
+        _, allocator, _, _ = self._build()
+        # Occupy enough that a live check would refuse a modest ask.
+        taken = allocator.alloc(allocator.available_size())
+        self.assertIsNotNone(taken)
+        self.assertFalse(allocator.can_reserve(4, 4))
+        # `empty_pool` asks "could this EVER fit", so the live state is ignored.
+        self.assertTrue(allocator.can_reserve(4, 4, empty_pool=True))
+        # ... but the ceiling still binds.
+        self.assertFalse(allocator.can_reserve(1 << 20, 1 << 20, empty_pool=True))
+
+    def test_evictable_allowance_admits_what_the_live_state_refuses(self):
+        _, allocator, _, _ = self._build()
+        held = allocator.alloc(allocator.available_size())
+        self.assertIsNotNone(held)
+        want = 4
+        self.assertFalse(allocator.can_reserve(want, want))
+        self.assertTrue(
+            allocator.can_reserve(
+                want,
+                want,
+                full_evictable_tokens=len(held),
+                swa_evictable_tokens=len(held),
+            )
+        )
+
+    def test_reclaim_plan_asks_for_no_more_than_it_needs(self):
+        _, allocator, _, _ = self._build()
+        held = allocator.alloc(allocator.available_size())
+        self.assertIsNotNone(held)
+        want = 4
+        plan = allocator.reclaim_plan(
+            want,
+            want,
+            full_evictable_tokens=len(held),
+            swa_evictable_tokens=len(held),
+        )
+        self.assertIsNotNone(plan)
+        full_reclaim, swa_reclaim = plan
+        self.assertLessEqual(full_reclaim, len(held))
+        self.assertLessEqual(swa_reclaim, len(held))
+        # Minimal on the SWA side: one page less must not fit.
+        if swa_reclaim:
+            self.assertFalse(
+                allocator._fits_page_demand(
+                    want // allocator.page_size or 1,
+                    want // allocator.page_size or 1,
+                    full_reclaim_pages=full_reclaim // allocator.page_size,
+                    swa_reclaim_pages=(swa_reclaim // allocator.page_size) - 1,
+                )
+            )
+
+    def test_float_holes_are_credited_once(self):
+        """REGRESSION: the float's holes counted as both holes and index room,
+        so the supply term admitted page demand the grid could not yield."""
+        _, allocator, _, _ = self._build()
+        sa = allocator.swa_attn_allocator
+        held = allocator.alloc(8)
+        self.assertIsNotNone(held)
+        allocator.free_swa(held[:4])  # punch holes into the float's span
+        self.assertGreater(sa._hole_pages(), 0)
+
+        addressable = sa.num_pages - sa.min_page_index
+        obtainable = sa._hole_pages() + (addressable - sa._span_pages())
+        self.assertEqual(obtainable, addressable - sa._live_pages())
+        # One page past the true supply must be refused, regardless of bytes.
+        self.assertFalse(allocator._fits_page_demand(0, obtainable + 1))
+
+    def test_evict_to_free_tokens_accepts_an_asymmetric_tail(self):
+        """REGRESSION: this override omitted `swa_num_tokens`, so a window-tail
+        reclaim on a tri-pool decode node raised TypeError."""
+        _, allocator, _, _ = self._build()
+        # tree_cache=None is the documented "nothing to decide" short-circuit.
+        self.assertIsNone(allocator.evict_to_free_tokens(None, 4, swa_num_tokens=1))
+
+        tree_cache = MagicMock()
+        tree_cache.is_chunk_cache.return_value = False
+        tree_cache.full_evictable_size.return_value = 0
+        tree_cache.swa_evictable_size.return_value = 0
+        self.assertIsInstance(
+            allocator.evict_to_free_tokens(tree_cache, 4, swa_num_tokens=1), bool
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

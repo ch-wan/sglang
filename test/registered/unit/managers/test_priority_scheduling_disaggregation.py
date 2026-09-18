@@ -157,6 +157,10 @@ class TestDecodePreallocQueuePriority(unittest.TestCase):
         queue.req_to_metadata_buffer_idx_allocator.alloc.side_effect = iter(range(100))
 
         queue.token_to_kv_pool_allocator = MagicMock()
+        # Static pool: FULL and SWA own separate buffers, so their token
+        # counts are checked independently. A bare MagicMock would answer
+        # truthy and silently route this through the shared-byte path.
+        queue.token_to_kv_pool_allocator.supports_joint_byte_reservation.return_value = False
         queue.token_to_kv_pool_allocator.page_size = 1
         queue.token_to_kv_pool_allocator.available_size.return_value = 1000
         queue.token_to_kv_pool = MagicMock()

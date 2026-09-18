@@ -83,9 +83,6 @@ from sglang.srt.managers.schedule_policy import match_prefix_for_req
 from sglang.srt.managers.utils import GenerationBatchResult
 from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
 from sglang.srt.mem_cache.allocator.swa import is_swa_req_ring
-from sglang.srt.mem_cache.allocator.unified_hybrid_swa import (
-    supports_swa_byte_budget,
-)
 from sglang.srt.mem_cache.base_prefix_cache import (
     BasePrefixCache,
     DecLockRefParams,
@@ -459,12 +456,10 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             and hasattr(self.token_to_kv_pool_allocator, "alloc_extend_swa_tail")
         )
 
-    def _supports_unified_swa_reservation(self) -> bool:
-        return supports_swa_byte_budget(self.token_to_kv_pool_allocator)
-
     def _uses_swa_reservation(self) -> bool:
-        return self._uses_swa_tail_prealloc() or supports_swa_byte_budget(
-            self.token_to_kv_pool_allocator
+        return (
+            self._uses_swa_tail_prealloc()
+            or self.token_to_kv_pool_allocator.supports_joint_byte_reservation()
         )
 
     def _unified_swa_reservation_fits(
@@ -510,7 +505,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
         full_allocatable_tokens: int,
         swa_allocatable_tokens: Optional[int],
     ) -> bool:
-        if self._supports_unified_swa_reservation():
+        if self.token_to_kv_pool_allocator.supports_joint_byte_reservation():
             return self._unified_swa_reservation_fits(
                 full_tokens,
                 swa_tokens,
@@ -533,7 +528,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
     ) -> Optional[str]:
         allocator = self.token_to_kv_pool_allocator
         page_size = allocator.page_size
-        if self._supports_unified_swa_reservation():
+        if self.token_to_kv_pool_allocator.supports_joint_byte_reservation():
             full_required = ceil_align(full_len, page_size)
             swa_required = ceil_align(swa_tail_len, page_size)
             capacity_ready = allocator.evict_to_free_tokens(
@@ -889,7 +884,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
 
     def _check_if_req_exceed_kv_capacity(self, req: Req) -> bool:
         message = None
-        if self._supports_unified_swa_reservation():
+        if self.token_to_kv_pool_allocator.supports_joint_byte_reservation():
             full_required, swa_required = self._prealloc_required_tokens(req)
             if not self._uses_swa_tail_prealloc():
                 swa_required = full_required
@@ -981,7 +976,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             ):
                 break
 
-            if self._supports_unified_swa_reservation():
+            if self.token_to_kv_pool_allocator.supports_joint_byte_reservation():
                 full_len, swa_len = self._prealloc_kv_lens(req)
                 if (
                     self._reclaim_swa_tail_capacity(swa_len, req.rid, full_len=full_len)
@@ -1894,7 +1889,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
         # remaining headroom up to per-req window cap.
         window_size = self.scheduler.sliding_window_size or 0
         allocator = self.token_to_kv_pool_allocator
-        if self._supports_unified_swa_reservation():
+        if self.token_to_kv_pool_allocator.supports_joint_byte_reservation():
             _, (swa_total, swa_available) = allocator.swa_capacity_and_available(
                 full_capacity=allocator.size_full, swa_capacity=allocator.size_swa
             )
