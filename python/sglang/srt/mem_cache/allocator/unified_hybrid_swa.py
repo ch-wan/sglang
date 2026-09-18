@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import abstractmethod
-from typing import Callable, List, Optional, Sequence, Tuple, TypeGuard
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import torch
 from torch.profiler import record_function
@@ -42,13 +42,6 @@ from sglang.srt.mem_cache.unified_memory_pool import UnifiedKVPool
 from sglang.srt.utils.common import get_num_new_pages
 
 logger = logging.getLogger(__name__)
-
-
-def supports_swa_byte_budget(
-    allocator: BaseTokenToKVPoolAllocator | None,
-) -> TypeGuard[UnifiedSWATokenToKVPoolAllocator]:
-    """Whether FULL/SWA demand can be checked against a two-pool byte budget."""
-    return isinstance(allocator, UnifiedSWATokenToKVPoolAllocator)
 
 
 class UnifiedSWAAllocatorBase(SWATokenToKVPoolAllocator):
@@ -757,6 +750,16 @@ class UnifiedSWAAllocatorBase(SWATokenToKVPoolAllocator):
                 forward_done, out_cache_loc_virtual
             )
 
+    def supports_joint_byte_reservation(self) -> bool:
+        """Both sides are cut from one buffer, so their demands are coupled.
+
+        True promises that `can_reserve` and `evict_to_free_tokens` accept an
+        asymmetric (full, swa) demand, a per-side evictable allowance, and an
+        `empty_pool` probe. A layout that cannot answer all three overrides
+        this back to False.
+        """
+        return True
+
     @abstractmethod
     def _build_swa_attn_allocator(self, **kwargs) -> MultiEndedAllocator: ...
 
@@ -1244,6 +1247,15 @@ class UnifiedMambaSWATokenToKVPoolAllocator(UnifiedSWAAllocatorBase):
         return
 
     # -- capacity --
+
+    def supports_joint_byte_reservation(self) -> bool:
+        """The float chain prices only the demand it can place right now.
+
+        `can_reserve` here refuses any evictable allowance and the `empty_pool`
+        probe, so PD admission stays on the per-side token check rather than
+        read a False that means "cannot answer" as "does not fit".
+        """
+        return False
 
     def can_reserve(
         self,

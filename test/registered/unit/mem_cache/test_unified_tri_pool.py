@@ -1460,5 +1460,45 @@ class TestFloatHoleCreditIsPerSide(unittest.TestCase):
         self.assertEqual(flt._byte_accounting_violations(), [])
 
 
+class TestJointByteReservationIsTheAllocatorsAnswer(unittest.TestCase):
+    """Each pool declares whether FULL/SWA demand is priced against one byte
+    budget; nothing infers it from the allocator's class.
+
+    REGRESSION: `DecodePreallocQueue` decided with an `isinstance` naming only
+    the two-pool sibling, so this layout's answer depended on a class name
+    rather than on what it can compute.
+    """
+
+    def _build(self, **kw):
+        return TestUnifiedTriPool._build(self, **kw)
+
+    def test_each_layout_answers_for_itself(self):
+        from test_unified_byte_budget_sizing import _swa_factory
+
+        from sglang.srt.mem_cache.allocator.base import BaseTokenToKVPoolAllocator
+
+        # Ignores `self`: a pool whose sides own separate buffers says False.
+        self.assertFalse(
+            BaseTokenToKVPoolAllocator.supports_joint_byte_reservation(None)
+        )
+        self.assertTrue(
+            _swa_factory(
+                page_size=4
+            ).token_to_kv_pool_allocator.supports_joint_byte_reservation()
+        )
+        # The float chain declines until `can_reserve` can price an evictable
+        # allowance and the empty-pool probe.
+        _, tri, _, _ = self._build()
+        self.assertFalse(tri.supports_joint_byte_reservation())
+
+    def test_declining_layout_keeps_can_reserve_honest(self):
+        """A False answer must mean "ask me per side", not "nothing fits": the
+        probes it cannot price still refuse, so a caller that ignored the
+        declaration would read them as a capacity verdict."""
+        _, tri, _, _ = self._build()
+        self.assertFalse(tri.can_reserve(4, 4, empty_pool=True))
+        self.assertFalse(tri.can_reserve(4, 4, full_evictable_tokens=64))
+
+
 if __name__ == "__main__":
     unittest.main()
