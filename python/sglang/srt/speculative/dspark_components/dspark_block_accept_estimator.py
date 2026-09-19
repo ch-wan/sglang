@@ -12,6 +12,7 @@ import torch
 
 from sglang.srt.environ import envs
 from sglang.srt.kv_canary.runner.future_tensor import DelayedDeviceHostHandler
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.speculative.ragged_verify import RaggedVerifyLayout
 
 logger = logging.getLogger(__name__)
@@ -817,9 +818,9 @@ class BlockAcceptEstimateRecorder:
 
 
 def create_block_accept_estimate_recorder(
-    *, gamma: int, device: Union[str, torch.device], tp_rank: int
+    *, gamma: int, device: Union[str, torch.device]
 ) -> Optional[BlockAcceptEstimateRecorder]:
-    if tp_rank != 0:
+    if get_parallel().tp_rank != 0:
         return None
 
     path = envs.SGLANG_DSPARK_BLOCK_ACCEPT_ESTIMATE_PATH.get()

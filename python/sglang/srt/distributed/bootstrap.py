@@ -24,7 +24,6 @@ from sglang.srt.distributed.gated_launch import maybe_wait_for_gated_launch
 from sglang.srt.distributed.parallel_state import (
     _tag_groups_for_flashinfer_allreduce_only,
 )
-from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.environ import envs
 from sglang.srt.layers.dp_attention import initialize_dp_attention
 from sglang.srt.layers.layernorm_sp import initialize_layernorm_sp
@@ -72,7 +71,7 @@ def init_torch_distributed(
     server_args: ServerArgs,
     model_config: ModelConfig,
     device: str,
-    ps: ParallelState,
+    gpu_id: int,
     dist_port: int,
     is_draft_worker: bool,
     local_omp_cpuid: Optional[List[int]],
@@ -82,8 +81,9 @@ def init_torch_distributed(
 
     backend = _resolve_backend(device=device)
 
-    before_avail_memory = get_available_gpu_memory(device, ps.gpu_id)
-    if not get_parallel().enable_p2p_check:
+    parallel = get_parallel()
+    before_avail_memory = get_available_gpu_memory(device, gpu_id)
+    if not parallel.enable_p2p_check:
         monkey_patch_p2p_access_check()
 
     dist_init_method = _resolve_dist_init_method(dist_port=dist_port)
@@ -92,8 +92,6 @@ def init_torch_distributed(
     if not is_draft_worker:
         if device == "cpu":
             _init_cpu_threads_env(
-                tp_size=ps.tp_size,
-                tp_rank=ps.tp_rank,
                 local_omp_cpuid=local_omp_cpuid,
                 dist_init_method=dist_init_method,
             )
@@ -105,26 +103,15 @@ def init_torch_distributed(
             dist_init_method=dist_init_method,
             server_args=server_args,
             model_config=model_config,
-            gpu_id=ps.gpu_id,
-            tp_rank=ps.tp_rank,
-            tp_size=ps.tp_size,
-            pp_rank=ps.pp_rank,
-            pp_size=ps.pp_size,
-            attn_dp_size=ps.attn_dp_size,
-            attn_cp_size=ps.attn_cp_size,
-            moe_ep_size=ps.moe_ep_size,
-            moe_dp_size=ps.moe_dp_size,
-            dcp_size=ps.attn_dcp_size,
+            gpu_id=gpu_id,
         )
 
         # Pre-warm NCCL/RCCL/HCCL to eliminate cold-start latency in first request
         # Controlled by --pre-warm-nccl flag (default: enabled on AMD GPUs)
         if get_exec().comm.pre_warm_nccl and (
-            ps.tp_size > 1 or ps.pp_size > 1 or ps.moe_ep_size > 1
+            parallel.tp_size > 1 or parallel.pp_size > 1 or parallel.moe_ep_size > 1
         ):
-            _prewarm_nccl(
-                tp_size=ps.tp_size, pp_size=ps.pp_size, moe_ep_size=ps.moe_ep_size
-            )
+            _prewarm_nccl()
 
         # CUDA graph capture enables the PyNCCL communicator for TP LM-head
         # all-to-all. Exercise that exact send/recv path before measuring
@@ -132,8 +119,8 @@ def init_torch_distributed(
         # included in later KV-cache sizing instead of appearing during capture.
         if (
             device == "cuda"
-            and get_parallel().enable_tp_lm_head_all_to_all
-            and ps.tp_size > 1
+            and parallel.enable_tp_lm_head_all_to_all
+            and parallel.tp_size > 1
         ):
             _prewarm_tp_lm_head_all_to_all()
 
@@ -145,17 +132,17 @@ def init_torch_distributed(
     # including them in this WORLD reduction would deadlock on absent peers.
     pre_model_load_memory = get_available_gpu_memory(
         device,
-        ps.gpu_id,
+        gpu_id,
         distributed=get_world_group().world_size > 1 and not is_draft_worker,
         cpu_group=get_world_group().cpu_group,
     )
     tp_group = get_tp_group()
     pp_group = get_pp_group()
-    attention_tp_group = get_parallel().attn_tp_group
+    attention_tp_group = parallel.attn_tp_group
 
     # Check memory for tensor parallelism
-    local_gpu_memory = get_available_gpu_memory(device, ps.gpu_id)
-    if ps.tp_size > 1 and not is_draft_worker:
+    local_gpu_memory = get_available_gpu_memory(device, gpu_id)
+    if parallel.tp_size > 1 and not is_draft_worker:
         _check_tp_memory_balance(
             pre_model_load_memory=pre_model_load_memory,
             local_gpu_memory=local_gpu_memory,
@@ -222,17 +209,16 @@ def _set_shm_master_env(dist_init_method: Optional[str]) -> None:
 
 def _init_cpu_threads_env(
     *,
-    tp_size: int,
-    tp_rank: int,
     local_omp_cpuid: Optional[List[int]],
     dist_init_method: Optional[str] = None,
 ) -> None:
     if _is_cpu_amx_available or _is_cpu_arm64:
+        parallel = get_parallel()
         # Bind OpenMP threads to CPU cores
         torch.ops.sgl_kernel.init_cpu_threads_env(local_omp_cpuid)
 
         # Set local size to hint SGLang to use shared memory based AllReduce
-        os.environ["LOCAL_SIZE"] = str(tp_size)
+        os.environ["LOCAL_SIZE"] = str(parallel.tp_size)
 
         # shm.cpp names its /dev/shm segments from MASTER_ADDR/MASTER_PORT.
         # Feed each engine's unique dist_init_method (tcp://host:port) into
@@ -240,7 +226,7 @@ def _init_cpu_threads_env(
         # don't collide.
         _set_shm_master_env(dist_init_method)
 
-        torch.ops.sgl_kernel.initialize(tp_size, tp_rank)
+        torch.ops.sgl_kernel.initialize(parallel.tp_size, parallel.tp_rank)
 
     else:
         logger.warning(
@@ -255,23 +241,16 @@ def _init_parallel_groups(
     server_args: ServerArgs,
     model_config: ModelConfig,
     gpu_id: int,
-    tp_rank: int,
-    tp_size: int,
-    pp_rank: int,
-    pp_size: int,
-    attn_dp_size: int,
-    attn_cp_size: int,
-    moe_ep_size: int,
-    moe_dp_size: int,
-    dcp_size: int,
 ) -> None:
+    parallel = get_parallel()
+    tp_size, pp_size = parallel.tp_size, parallel.pp_size
     is_ep_joiner = get_exec().moe.is_ep_joiner
     is_scale_joiner = get_exec().moe.is_ep_scale_joiner
-    rank_offset = get_parallel().ep_join_rank_offset if is_scale_joiner else 0
+    rank_offset = parallel.ep_join_rank_offset if is_scale_joiner else 0
     world_size = (
         rank_offset + tp_size * pp_size if is_scale_joiner else tp_size * pp_size
     )
-    rank = rank_offset + tp_size * pp_rank + tp_rank
+    rank = rank_offset + tp_size * parallel.pp_rank + parallel.tp_rank
 
     init_distributed_environment(
         backend=backend,
@@ -279,27 +258,27 @@ def _init_parallel_groups(
         rank=rank,
         local_rank=gpu_id,
         distributed_init_method=dist_init_method,
-        timeout=get_parallel().dist_timeout,
+        timeout=parallel.dist_timeout,
         moe_a2a_backend=get_exec().moe.moe_a2a_backend,
         recovered_rank=is_ep_joiner,
-        max_world_size=get_parallel().max_ep_size,
+        max_world_size=parallel.max_ep_size,
     )
     initialize_model_parallel(
         tensor_model_parallel_size=tp_size,
-        attention_data_parallel_size=attn_dp_size,
+        attention_data_parallel_size=parallel.attn_dp_size,
         pipeline_model_parallel_size=pp_size,
-        expert_model_parallel_size=moe_ep_size,
-        attention_context_model_parallel_size=attn_cp_size,
-        moe_data_model_parallel_size=moe_dp_size,
-        decode_context_parallel_size=dcp_size,
-        shared_experts_tensor_parallel_size=get_parallel().shared_experts_tp_size,
+        expert_model_parallel_size=parallel.moe_ep_size,
+        attention_context_model_parallel_size=parallel.attn_cp_size,
+        moe_data_model_parallel_size=parallel.moe_dp_size,
+        decode_context_parallel_size=parallel.attn_dcp_size,
+        shared_experts_tensor_parallel_size=parallel.shared_experts_tp_size,
         duplicate_tp_group=get_disagg().enable_pdmux,
         enable_symm_mem=get_exec().comm.enable_symm_mem,
         # Only WORLD is extended during scale-up. The joiner's model-parallel
         # groups are fixed groups local to its launch cohort.
         recovered_rank=is_ep_joiner and not is_scale_joiner,
         rank_offset=rank_offset,
-        max_world_size=None if is_scale_joiner else get_parallel().max_ep_size,
+        max_world_size=None if is_scale_joiner else parallel.max_ep_size,
     )
     _tag_groups_for_flashinfer_allreduce_only()
     initialize_dp_attention(
@@ -311,7 +290,8 @@ def _init_parallel_groups(
         register_sgl_tp_rank(gpu_id)
 
 
-def _prewarm_nccl(*, tp_size: int, pp_size: int, moe_ep_size: int) -> None:
+def _prewarm_nccl() -> None:
+    parallel = get_parallel()
     warmup_start = time.perf_counter()
     tp_group_handle = get_tp_group().device_group
 
@@ -323,7 +303,8 @@ def _prewarm_nccl(*, tp_size: int, pp_size: int, moe_ep_size: int) -> None:
     warmup_elapsed = time.perf_counter() - warmup_start
     logger.info(
         f"NCCL/RCCL/HCCL warmup completed in {warmup_elapsed:.3f}s "
-        f"(tp_size={tp_size}, pp_size={pp_size}, ep_size={moe_ep_size})"
+        f"(tp_size={parallel.tp_size}, pp_size={parallel.pp_size}, "
+        f"ep_size={parallel.moe_ep_size})"
     )
 
 

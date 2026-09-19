@@ -53,7 +53,6 @@ class DynamicChunkSizer:
         device: str,
         pp_group: GroupCoordinator,
         world_group: GroupCoordinator,
-        pp_rank: int,
     ):
         self.model_runner = model_runner
         self.model_config = model_config
@@ -67,7 +66,7 @@ class DynamicChunkSizer:
         self.device = device
         self.pp_group = pp_group
         self.world_group = world_group
-        self.pp_rank = pp_rank
+        self.pp_rank = get_parallel().pp_rank
         self.predictor = ChunkSizePredictor()
 
     def profile_and_fit(self) -> bool:

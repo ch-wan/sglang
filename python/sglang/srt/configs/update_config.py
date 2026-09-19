@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils import (
     log_debug_on_rank0,
 )
@@ -137,7 +138,8 @@ def adjust_tp_num_heads_if_necessary(model_config, tp_size, is_post_update):
                 )
 
 
-def adjust_swa_num_heads_if_necessary(model_config, tp_size, weight_block_size):
+def adjust_swa_num_heads_if_necessary(model_config, weight_block_size):
+    tp_size = get_parallel().tp_size
     # Sliding-window layers carry their own head counts, so the padded
     # full-attention num_attention_heads does not describe them
     from sglang.srt.layers.vocab_parallel_embedding import pad_vocab_size
@@ -217,9 +219,10 @@ def update_config(model_config, attr_name, new_value):
 
 
 def adjust_config_with_unaligned_cpu_tp(
-    model_config: ModelConfig, load_config: LoadConfig, tp_size: int
+    model_config: ModelConfig, load_config: LoadConfig
 ) -> ModelConfig:
     # Support the case where the num_attention_heads is not divisible by the TP size.
+    tp_size = get_parallel().tp_size
     weight_block_size = may_get_weight_block_size(model_config, load_config)
 
     for config in [model_config.hf_config, model_config.hf_text_config]:
@@ -250,7 +253,7 @@ def adjust_config_with_unaligned_cpu_tp(
 
         # gate is on full-attention counts; Gemma 4 has 2 full-attention KV
         # heads, so only TP 1 and 2 clear it and both align the 8 sliding heads
-        adjust_swa_num_heads_if_necessary(model_config, tp_size, weight_block_size)
+        adjust_swa_num_heads_if_necessary(model_config, weight_block_size)
 
         query_heads_per_kv = (
             model_config.num_attention_heads // model_config.get_total_num_kv_heads()

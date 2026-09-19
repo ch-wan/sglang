@@ -65,9 +65,9 @@ _DP = "sglang.srt.layers.dp_attention"
 # Ranks and the launch width are asked of the group: they are not implied by
 # anything, so there is nothing to derive them from. The quotients are not
 # here -- `attn_tp_size` and its siblings are functions of the configured
-# leaves, and `TestDerivedWidths` pins them. `attn_dp_rank` is not here either: no group coordinator
-# knows it, so it is stamped when the attention topology is initialized and
-# `TestStampedRanks` is what pins it. The other world width is not here
+# leaves, and `TestDerivedWidths` pins them. `attn_dp_rank` and `moe_dp_rank`
+# are not here either: both come from the stamp rather than a group, and
+# `TestStampedRanks` is what pins them. The other world width is not here
 # because the group does not know it; `TestTheTwoWorldWidths` pins it.
 SIZE_RANK_DELEGATIONS = [
     ("launch_world_size", f"{_PS}.get_world_size"),
@@ -76,7 +76,6 @@ SIZE_RANK_DELEGATIONS = [
     ("dcp_rank", f"{_PS}.get_dcp_rank"),
     ("pp_rank", f"{_PS}.get_pipeline_model_parallel_rank"),
     ("moe_ep_rank", f"{_PS}.get_moe_expert_parallel_rank"),
-    ("moe_dp_rank", f"{_PS}.get_moe_data_parallel_rank"),
     ("moe_tp_rank", f"{_PS}.get_moe_tensor_parallel_rank"),
     ("attn_tp_rank", f"{_PS}.get_attn_tensor_model_parallel_rank"),
     ("attn_cp_rank", f"{_PS}.get_attn_context_model_parallel_rank"),
@@ -344,12 +343,17 @@ class TestAttentionRanksComeFromPublish(_IsolatedOverrides):
 
 
 class TestStampedRanks(_IsolatedOverrides):
-    """`attn_dp_rank` comes from the stamp, and says so when there is none.
+    """`attn_dp_rank` and `moe_dp_rank` come from the stamp, and say so when
+    there is none.
 
-    It is the one rank no group answers with: `initialize_dp_attention`
+    `attn_dp_rank` is the rank no group answers with: `initialize_dp_attention`
     computes it from this process's `tp_rank`, and an elastic scale-up
     replaces it with a rank in the expanded WORLD. Falling back to anything
     would be inventing a placement for this process.
+
+    `moe_dp_rank` has a group that would answer, and that is the problem: it
+    is aliased to the attention-CP one under `moe_dp_size < attn_cp_size` and
+    reports the CP index there. See its `_LIVE_READS` entry.
     """
 
     def setUp(self):
@@ -383,6 +387,16 @@ class TestStampedRanks(_IsolatedOverrides):
         with self.assertRaises(RuntimeError) as caught:
             get_parallel().attn_dp_rank
         self.assertIn("initialize_dp_attention", str(caught.exception))
+
+    def test_the_moe_dp_stamp_is_the_answer(self):
+        parallel = get_parallel()
+        parallel.override_permanently(moe_dp_rank=2)
+        self.assertEqual(parallel.moe_dp_rank, 2)
+
+    def test_unstamped_moe_dp_names_the_cause(self):
+        with self.assertRaises(RuntimeError) as caught:
+            get_parallel().moe_dp_rank
+        self.assertIn("rank bundle", str(caught.exception))
 
     def test_a_stated_width_reaches_the_padding_mode(self):
         """The reason this PR exists, from a reader's side.

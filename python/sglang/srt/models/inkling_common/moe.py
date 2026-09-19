@@ -714,12 +714,14 @@ def _build_inkling_shared_experts(
     intermediate_size: int,
     layer_id: int,
     prefix: str,
-    moe_tp_rank: int,
-    moe_tp_size: int,
     quant_config: QuantizationConfig | None = None,
 ) -> nn.Module | None:
     if n_shared_experts <= 0:
         return None
+    # Shared expert is a replicated dense MLP: shard over the full tp group, not
+    # moe_tp (the single full-tp all_reduce in forward() reconstructs it).
+    moe_tp_rank = get_parallel().tp_rank
+    moe_tp_size = get_parallel().tp_size
     if shared_expert_sink:
         shared_prefix = add_prefix("shared_experts", prefix)
         shared_sink_serves_fp4 = InklingBatchDenseMLP._resolve_fp4_strategy(
@@ -871,10 +873,6 @@ class InklingMoE(nn.Module):
             intermediate_size=self.intermediate_dim,
             layer_id=layer_id,
             prefix=prefix,
-            # Shared expert is a replicated dense MLP: shard over the full tp group, not
-            # moe_tp (the single full-tp all_reduce in forward() reconstructs it).
-            moe_tp_rank=get_parallel().tp_rank,
-            moe_tp_size=get_parallel().tp_size,
             quant_config=self.quant_config,
         )
         if isinstance(self.shared_experts, InklingSharedFusedMoE):

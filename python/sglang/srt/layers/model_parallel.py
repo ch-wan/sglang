@@ -23,6 +23,8 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+from sglang.srt.runtime_context import get_parallel
+
 
 def _shard_tensor(
     full_tensor: torch.Tensor,
@@ -162,8 +164,8 @@ def apply_torch_tp(
     *,
     model: nn.Module,
     device: str,
-    tp_size: int,
 ):
+    tp_size = get_parallel().tp_size
     logger.info(f"Enabling torch tensor parallelism on {tp_size} devices.")
     device_mesh = torch.distributed.init_device_mesh(device, (tp_size,))
     tensor_parallel(model, device_mesh)

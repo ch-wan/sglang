@@ -450,12 +450,6 @@ class Scheduler(
         server_args: ServerArgs,
         port_args: PortArgs,
         gpu_id: int,
-        tp_rank: int,
-        moe_ep_rank: int,
-        pp_rank: int,
-        attn_cp_rank: int,
-        moe_dp_rank: int,
-        dp_rank: Optional[int],
     ):
         # NOTE: KEEP THE FOLLOWING CODE STYLE for this function:
         # Keep __init__ as an orchestrator: sequence init_* and maybe_init_* calls
@@ -517,34 +511,35 @@ class Scheduler(
         self.enable_unified_memory = get_memory().enable_unified_memory
 
         # Distributed rank info
+        parallel = get_parallel()
         attn_tp_rank, attn_tp_size, attn_dp_rank, attn_dp_size = (
             compute_dp_attention_world_info(
-                get_parallel().enable_dp_attention,
-                tp_rank,
-                get_parallel().tp_size,
-                get_parallel().dp_size,
-                get_parallel().attn_cp_size,
+                parallel.enable_dp_attention,
+                parallel.tp_rank,
+                parallel.tp_size,
+                parallel.dp_size,
+                parallel.attn_cp_size,
             )
         )
         self.ps = ParallelState(
-            tp_rank=tp_rank,
-            tp_size=get_parallel().tp_size,
-            pp_rank=pp_rank,
-            pp_size=get_parallel().pp_size,
-            dp_rank=dp_rank,
-            dp_size=get_parallel().dp_size,
+            tp_rank=parallel.tp_rank,
+            tp_size=parallel.tp_size,
+            pp_rank=parallel.pp_rank,
+            pp_size=parallel.pp_size,
+            dp_rank=parallel.dp_rank,
+            dp_size=parallel.dp_size,
             attn_tp_rank=attn_tp_rank,
             attn_tp_size=attn_tp_size,
-            attn_cp_rank=attn_cp_rank,
-            attn_cp_size=get_parallel().attn_cp_size,
-            attn_dcp_rank=tp_rank % get_parallel().dcp_size,
-            attn_dcp_size=get_parallel().dcp_size,
+            attn_cp_rank=parallel.attn_cp_rank,
+            attn_cp_size=parallel.attn_cp_size,
+            attn_dcp_rank=parallel.tp_rank % parallel.dcp_size,
+            attn_dcp_size=parallel.dcp_size,
             attn_dp_rank=attn_dp_rank,
             attn_dp_size=attn_dp_size,
-            moe_ep_rank=moe_ep_rank,
-            moe_ep_size=get_parallel().ep_size,
-            moe_dp_rank=moe_dp_rank,
-            moe_dp_size=get_parallel().moe_dp_size,
+            moe_ep_rank=parallel.moe_ep_rank,
+            moe_ep_size=parallel.ep_size,
+            moe_dp_rank=parallel.moe_dp_rank,
+            moe_dp_size=parallel.moe_dp_size,
             gpu_id=gpu_id,
         )
 
@@ -552,7 +547,7 @@ class Scheduler(
         self.init_model_config()
 
         # Init metrics stats
-        self.init_metrics_collector(tp_rank, pp_rank, dp_rank)
+        self.init_metrics_collector()
 
         # Init inter-process communication
         self.init_ipc_channels(port_args)
@@ -661,7 +656,7 @@ class Scheduler(
         # Init diffusion LLM
         self.init_diffusion_llm()
 
-        self.init_metrics_reporter(tp_rank, pp_rank, dp_rank)
+        self.init_metrics_reporter()
         self.scheduler_stage_metrics = self.metrics_reporter.scheduler_stage_metrics
 
         # Init schedule policy and new token estimation
@@ -796,15 +791,10 @@ class Scheduler(
                 else None
             )
 
-    def init_metrics_collector(
-        self, tp_rank: int, pp_rank: int, dp_rank: Optional[int]
-    ) -> None:
+    def init_metrics_collector(self) -> None:
         self.metrics_collector_context = SchedulerMetricsCollector.init_new(
             server_args=self.server_args,
             ps=self.ps,
-            tp_rank=tp_rank,
-            pp_rank=pp_rank,
-            dp_rank=dp_rank,
             enable_priority_scheduling=self.enable_priority_scheduling,
             enable_lora=self.enable_lora,
             enable_hierarchical_cache=self.enable_hierarchical_cache,
@@ -1361,7 +1351,6 @@ class Scheduler(
             device=self.device,
             pp_group=self.pp_group,
             world_group=self.world_group,
-            pp_rank=get_parallel().pp_rank,
         )
         if sizer.profile_and_fit():
             self.dynamic_chunk_sizer = sizer
@@ -1388,15 +1377,14 @@ class Scheduler(
         if is_extend:
             self._prefill_decode_interval_remaining = self.prefill_decode_interval
 
-    def init_metrics_reporter(
-        self, tp_rank: int, pp_rank: int, dp_rank: Optional[int]
-    ) -> None:
+    def init_metrics_reporter(self) -> None:
         # Override point for deployments that need a specialized reporter.
+        parallel = get_parallel()
         self.metrics_reporter = SchedulerMetricsReporter(
             scheduler=self,
-            tp_rank=tp_rank,
-            pp_rank=pp_rank,
-            dp_rank=dp_rank,
+            tp_rank=parallel.tp_rank,
+            pp_rank=parallel.pp_rank,
+            dp_rank=parallel.dp_rank,
             metrics_collector_context=self.metrics_collector_context,
             metrics_collector=self.metrics_collector,
         )
@@ -1555,7 +1543,6 @@ class Scheduler(
             self.disagg_decode_transfer_queue = DecodeTransferQueue(
                 gloo_group=self.attn_tp_cpu_group,
                 req_to_metadata_buffer_idx_allocator=self.req_to_metadata_buffer_idx_allocator,
-                tp_rank=get_parallel().tp_rank,
                 metadata_buffers=self.disagg_metadata_buffers,
                 scheduler=self,
                 tree_cache=self.tree_cache,
@@ -1572,13 +1559,9 @@ class Scheduler(
                 transfer_queue=self.disagg_decode_transfer_queue,
                 tree_cache=self.tree_cache,
                 gloo_group=self.attn_tp_cpu_group,
-                tp_rank=get_parallel().tp_rank,
-                tp_size=get_parallel().tp_size,
-                dp_size=get_parallel().dp_size,
                 gpu_id=self.ps.gpu_id,
                 bootstrap_port=get_disagg().disaggregation_bootstrap_port,
                 max_total_num_tokens=self.max_total_num_tokens,
-                pp_rank=get_parallel().pp_rank,
                 num_reserved_decode_tokens=get_disagg().num_reserved_decode_tokens,
                 transfer_backend=self.transfer_backend,
             )
@@ -1604,16 +1587,12 @@ class Scheduler(
                 draft_token_to_kv_pool=draft_token_to_kv_pool,
                 req_to_metadata_buffer_idx_allocator=self.req_to_metadata_buffer_idx_allocator,
                 metadata_buffers=self.disagg_metadata_buffers,
-                tp_rank=get_parallel().tp_rank,
-                tp_size=get_parallel().tp_size,
                 gpu_id=self.ps.gpu_id,
                 bootstrap_port=get_disagg().disaggregation_bootstrap_port,
                 gloo_group=self.attn_tp_cpu_group,
                 max_total_num_tokens=self.max_total_num_tokens,
                 scheduler=self,
                 scheduler_stage_metrics=self.scheduler_stage_metrics,
-                pp_rank=get_parallel().pp_rank,
-                pp_size=get_parallel().pp_size,
                 transfer_backend=self.transfer_backend,
             )
             # The prefill requests that are in the middle of kv sending
@@ -5950,42 +5929,37 @@ def resolve_spawn_dp_rank(dp_rank: Optional[int]) -> Optional[int]:
 def configure_scheduler_process(
     server_args: ServerArgs,
     gpu_id: int,
-    tp_rank: int,
-    attn_cp_rank: int,
-    moe_dp_rank: int,
-    moe_ep_rank: int,
-    pp_rank: int,
-    dp_rank: Optional[int],
     display_tp_rank: Optional[int] = None,
     display_dp_rank: Optional[int] = None,
     display_moe_ep_rank: Optional[int] = None,
 ) -> None:
     """Configure scheduler worker logging and process title.
 
-    display_* ranks are cosmetic; runtime ranks stay local. `dp_rank` arrives
-    already resolved -- see `resolve_spawn_dp_rank`.
+    Runs after `publish`, so every rank it labels the process with comes from
+    the context. display_* ranks are cosmetic; runtime ranks stay local.
     """
     kill_itself_when_parent_died()
 
     # Generate the logger prefix
-    shown_dp = display_dp_rank if display_dp_rank is not None else dp_rank
-    shown_tp = display_tp_rank if display_tp_rank is not None else tp_rank
+    parallel = get_parallel()
+    shown_dp = display_dp_rank if display_dp_rank is not None else parallel.dp_rank
+    shown_tp = display_tp_rank if display_tp_rank is not None else parallel.tp_rank
     shown_moe_ep = (
-        display_moe_ep_rank if display_moe_ep_rank is not None else moe_ep_rank
+        display_moe_ep_rank if display_moe_ep_rank is not None else parallel.moe_ep_rank
     )
 
     prefix = ""
     if shown_dp is not None:
         prefix += f" DP{shown_dp}"
-    if get_parallel().pp_size > 1:
-        prefix += f" PP{pp_rank}"
-    if get_parallel().attn_cp_size > 1:
-        prefix += f" ATTN_CP{attn_cp_rank}"
-    if get_parallel().moe_dp_size > 1:
-        prefix += f" MOE_DP{moe_dp_rank}"
-    if get_parallel().tp_size > 1:
+    if parallel.pp_size > 1:
+        prefix += f" PP{parallel.pp_rank}"
+    if parallel.attn_cp_size > 1:
+        prefix += f" ATTN_CP{parallel.attn_cp_rank}"
+    if parallel.moe_dp_size > 1:
+        prefix += f" MOE_DP{parallel.moe_dp_rank}"
+    if parallel.tp_size > 1:
         prefix += f" TP{shown_tp}"
-    if get_parallel().ep_size > 1:
+    if parallel.ep_size > 1:
         prefix += f" EP{shown_moe_ep}"
 
     # Config the process
@@ -5998,12 +5972,7 @@ def configure_scheduler_process(
 
     # Set cpu affinity to this gpu process
     if envs.SGLANG_SET_CPU_AFFINITY.get():
-        set_gpu_proc_affinity(
-            get_parallel().pp_size,
-            get_parallel().tp_size,
-            get_parallel().nnodes,
-            gpu_id,
-        )
+        set_gpu_proc_affinity(gpu_id)
     if not envs.SGLANG_NUMA_BIND_V2.get():
         numa_node = get_numa_node_if_available(server_args, gpu_id)
         if numa_node is not None:
@@ -6015,9 +5984,6 @@ def run_scheduler_process(
     port_args: PortArgs,
     gpu_id: int,
     tp_rank: int,
-    attn_cp_rank: int,
-    moe_dp_rank: int,
-    moe_ep_rank: int,
     pp_rank: int,
     dp_rank: Optional[int],
     pipe_writer,
@@ -6043,12 +6009,6 @@ def run_scheduler_process(
     configure_scheduler_process(
         server_args,
         gpu_id,
-        tp_rank,
-        attn_cp_rank,
-        moe_dp_rank,
-        moe_ep_rank,
-        pp_rank,
-        dp_rank,
         display_tp_rank=display_tp_rank,
         display_dp_rank=display_dp_rank,
         display_moe_ep_rank=display_moe_ep_rank,
@@ -6072,17 +6032,7 @@ def run_scheduler_process(
     # Create a scheduler and run the event loop
     scheduler = None
     try:
-        scheduler = Scheduler(
-            server_args,
-            port_args,
-            gpu_id,
-            tp_rank,
-            moe_ep_rank,
-            pp_rank,
-            attn_cp_rank,
-            moe_dp_rank,
-            dp_rank,
-        )
+        scheduler = Scheduler(server_args, port_args, gpu_id)
 
         # Send initialization info back to the parent process
         pipe_writer.send(scheduler.get_init_info())

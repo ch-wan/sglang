@@ -20,7 +20,7 @@ from sglang.srt.managers.schedule_batch import (
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.multimodal.processors.base_processor import BaseMultimodalProcessor
 from sglang.srt.parser.conversation import generate_chat_conv
-from sglang.srt.runtime_context import publish
+from sglang.srt.runtime_context import SpawnRanks, publish
 from sglang.srt.server_args import ServerArgs
 from sglang.test.test_utils import download_image_with_retry
 
@@ -146,7 +146,7 @@ class VisionLLMLogitsBase(unittest.IsolatedAsyncioTestCase):
             model_path=self.model_path,
             disable_cuda_graph=True,
         )
-        publish(server_args, role="scheduler")
+        publish(server_args, role="scheduler", ranks=SpawnRanks(world_rank=0))
         self.model_runner = ModelRunner(
             model_config=ModelConfig(self.model_path, model_override_args="{}"),
             mem_fraction_static=0.8,

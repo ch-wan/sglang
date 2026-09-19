@@ -175,7 +175,22 @@ _LIVE_READS: dict = {
     "tp_rank": "get_tensor_model_parallel_rank",
     "pp_rank": "get_pipeline_model_parallel_rank",
     "moe_ep_rank": "get_moe_expert_parallel_rank",
-    "moe_dp_rank": "get_moe_data_parallel_rank",
+    "moe_dp_rank": Live(
+        source=None,
+        doc=(
+            "This process's index among the MoE data-parallel replicas, "
+            "`tp_rank // (tp_size // moe_dp_size)`. Stamped rather than asked "
+            "of `_MOE_DP`, because that group is aliased to `_ATTN_CP` when "
+            "`moe_dp_size < attn_cp_size` and then answers the CP index "
+            "instead -- a different quantity, which has its own name in "
+            "`get_moe_cp_rank()`."
+        ),
+        unstamped=(
+            "it is a function of this process's `tp_rank`, stamped by "
+            "`publish(..., ranks=...)`; a process that published without a "
+            "rank bundle has no MoE-DP index to report"
+        ),
+    ),
     "moe_tp_rank": "get_moe_tensor_parallel_rank",
     "attn_tp_rank": "get_attn_tensor_model_parallel_rank",
     "attn_cp_rank": "get_attn_context_model_parallel_rank",
@@ -1793,12 +1808,6 @@ def publish(
             moe_dp_size=parallel.moe_dp_size,
             moe_ep_size=parallel.moe_ep_size,
         )
-        # `moe_dp_rank` is a different quantity when the MoE-DP group is
-        # aliased to the attention-CP one: the group answers the CP index,
-        # while this computes the MoE-DP index. Leave it to the group there, so
-        # one name does not mean two things.
-        if parallel.moe_dp_size < parallel.attn_cp_size:
-            placement.pop("moe_dp_rank")
         # `dp_rank` is recorded whatever it is, None included: replicas are
         # separate WORLD groups, so no rank implies it and `None` is the answer
         # "no controller" rather than an absence.

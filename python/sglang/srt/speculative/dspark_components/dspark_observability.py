@@ -734,10 +734,10 @@ class DsparkStepObservers:
         planner,
         gamma: int,
         verify_num_draft_tokens: int,
-        tp_rank: int,
         device,
         simulate_acc_len: float,
     ) -> None:
+        tp_rank = get_parallel().tp_rank
         self._planner = planner
         self._gamma = int(gamma)
         self._verify_num_draft_tokens = int(verify_num_draft_tokens)
@@ -758,7 +758,7 @@ class DsparkStepObservers:
             sps_report_interval=envs.SGLANG_DSPARK_LOG_SPS_PRED_INTERVAL.get(),
         )
         self._block_accept_recorder = create_block_accept_estimate_recorder(
-            gamma=gamma, device=device, tp_rank=tp_rank
+            gamma=gamma, device=device
         )
         if self._simulate_acc_len > 0 and self._block_accept_recorder is not None:
             raise ValueError(

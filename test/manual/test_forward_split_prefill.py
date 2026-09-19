@@ -23,7 +23,7 @@ from sglang.srt.model_executor.forward_context import (
     set_forward_context,
 )
 from sglang.srt.model_executor.model_runner import ModelRunner
-from sglang.srt.runtime_context import publish
+from sglang.srt.runtime_context import SpawnRanks, publish
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
@@ -57,7 +57,7 @@ class TestForwardSplitPrefill(CustomTestCase):
 
         cls.port_args = PortArgs.init_new(cls.server_args)
 
-        publish(cls.server_args, role="scheduler")
+        publish(cls.server_args, role="scheduler", ranks=SpawnRanks(world_rank=0))
 
         # Load model and tokenizer
         cls.model_config = ModelConfig.from_server_args(cls.server_args)

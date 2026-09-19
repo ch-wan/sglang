@@ -87,7 +87,7 @@ def maybe_downgrade_dtype_for_legacy_gpu(*, model_config: ModelConfig) -> None:
 
 
 def maybe_trigger_remote_instance_nccl_send_group(
-    *, tp_rank: int, load_format: str | None = None
+    *, load_format: str | None = None
 ) -> None:
     """``load_format`` is this runner's effective format: a draft loading under
     ``--speculative-draft-draft-load-format`` needs its own send group, and the
@@ -97,7 +97,7 @@ def maybe_trigger_remote_instance_nccl_send_group(
         and get_model().remote_instance_weight_loader_backend
         == RemoteInstanceWeightLoaderBackend.NCCL
     ):
-        if tp_rank == 0:
+        if get_parallel().tp_rank == 0:
             instance_ip = NetworkAddress.resolve_host(socket.gethostname())
             t = threading.Thread(
                 target=trigger_init_weights_send_group_for_remote_instance_request,
@@ -173,11 +173,9 @@ def maybe_register_debug_tensor_dump_hook(
     model,
     spec_algorithm: SpeculativeAlgorithm,
     is_draft_worker: bool,
-    tp_size: int,
-    tp_rank: int,
-    pp_rank: int,
 ) -> None:
     if get_observability().debug_tensor_dump_output_folder is not None:
+        parallel = get_parallel()
         dump_folder = get_observability().debug_tensor_dump_output_folder
         if spec_algorithm.is_eagle():
             role = "draft" if is_draft_worker else "target"
@@ -186,16 +184,15 @@ def maybe_register_debug_tensor_dump_hook(
             model,
             dump_folder,
             get_observability().debug_tensor_dump_layers,
-            tp_size,
-            tp_rank,
-            pp_rank,
+            parallel.tp_size,
+            parallel.tp_rank,
+            parallel.pp_rank,
         )
 
 
 def build_load_config(
     *,
     server_args: ServerArgs,
-    tp_rank: int,
     load_format: str | None = None,
     remote_instance_weight_transporter_engine: Any,
     remote_instance_weight_transporter_session_id: str,
@@ -217,7 +214,7 @@ def build_load_config(
         load_format=load_format or get_model().load_format,
         download_dir=get_model().download_dir,
         model_loader_extra_config=get_model().model_loader_extra_config,
-        tp_rank=tp_rank,
+        tp_rank=get_parallel().tp_rank,
         remote_instance_weight_loader_seed_instance_ip=get_model().remote_instance_weight_loader_seed_instance_ip,
         remote_instance_weight_loader_seed_instance_service_port=get_model().remote_instance_weight_loader_seed_instance_service_port,
         remote_instance_weight_loader_send_weights_group_ports=get_model().remote_instance_weight_loader_send_weights_group_ports,
@@ -367,7 +364,6 @@ def load_model_with_memory_saver(
 def dist_barrier_after_load(
     *,
     elastic_ep_backend: str | None,
-    tp_rank: int,
     is_ep_joiner: bool = False,
 ) -> None:
     if elastic_ep_backend == "mooncake":
@@ -384,5 +380,5 @@ def dist_barrier_after_load(
             )
         except RuntimeError:
             raise ValueError(
-                f"TP rank {tp_rank} could finish the model loading, but there are other ranks that didn't finish loading. It is likely due to unexpected failures (e.g., OOM) or a slow node."
+                f"TP rank {get_parallel().tp_rank} could finish the model loading, but there are other ranks that didn't finish loading. It is likely due to unexpected failures (e.g., OOM) or a slow node."
             ) from None
