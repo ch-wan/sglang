@@ -48,10 +48,18 @@ from sglang.srt.model_loader.weight_utils import (
     default_weight_loader,
     kv_cache_scales_loader,
 )
+from sglang.srt.models.looped_transformer import (
+    LoopConfig,
+    LoopModelAdapter,
+    LoopState,
+    TrainingFreeLoopPlugin,
+)
 from sglang.srt.platforms import current_platform
-from sglang.srt.runtime_context import get_exec, get_parallel
+from sglang.srt.runtime_context import get_exec, get_model, get_parallel
 from sglang.srt.utils import add_prefix, make_layers
 from sglang.srt.utils.hf_transformers_utils import get_rope_config
+
+_loop_plugin = TrainingFreeLoopPlugin()
 
 Qwen2Config = None
 
@@ -206,7 +214,13 @@ class Qwen2Attention(nn.Module):
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v, forward_batch)
+        attn_output = self.attn(
+            q,
+            k,
+            v,
+            forward_batch,
+            save_kv_cache=not getattr(forward_batch, "_loop_disable_kv_cache", False),
+        )
         output, _ = self.o_proj(attn_output)
         return output
 
@@ -392,6 +406,85 @@ class Qwen2Model(nn.Module):
         return self.embed_tokens
 
     def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: ForwardBatch,
+        input_embeds: torch.Tensor = None,
+        pp_proxy_tensors: Optional[PPProxyTensors] = None,
+    ) -> Union[torch.Tensor, PPProxyTensors]:
+        loop_config = LoopConfig.from_json(get_model().loop_config)
+        if (
+            loop_config is None
+            or loop_config.k <= 1
+            or forward_batch.forward_mode.is_mixed()
+            or (
+                not forward_batch.forward_mode.is_prefill()
+                and loop_config.decode_mode != "full"
+            )
+            or len(self.layers_to_capture) > 0
+        ):
+            return self._forward_standard(
+                input_ids, positions, forward_batch, input_embeds, pp_proxy_tensors
+            )
+
+        def initial_state() -> LoopState:
+            if self.pp_group.is_first_rank:
+                hidden_states = (
+                    self.embed_tokens(input_ids)
+                    if input_embeds is None
+                    else input_embeds
+                )
+                return LoopState(hidden_states, None)
+            assert pp_proxy_tensors is not None
+            return LoopState(
+                pp_proxy_tensors["hidden_states"], pp_proxy_tensors["residual"]
+            )
+
+        def run_layer(layer_id: int, state: LoopState) -> LoopState:
+            hidden_states, residual = self.layers[layer_id](
+                positions,
+                state.hidden_states,
+                forward_batch,
+                state.residual,
+            )
+            return LoopState(hidden_states, residual)
+
+        def run_prefix(state: LoopState) -> LoopState:
+            for layer_id in range(self.start_layer, loop_config.start):
+                state = run_layer(layer_id, state)
+            return state
+
+        def finalize(state: LoopState):
+            for layer_id in range(loop_config.end, self.end_layer):
+                state = run_layer(layer_id, state)
+            hidden_states, residual = state.hidden_states, state.residual
+            if not self.pp_group.is_last_rank:
+                return PPProxyTensors(
+                    {"hidden_states": hidden_states, "residual": residual}
+                )
+            if hidden_states.shape[0] != 0:
+                if residual is None:
+                    hidden_states = self.norm(hidden_states)
+                else:
+                    hidden_states, _ = self.norm(hidden_states, residual)
+            return hidden_states
+
+        adapter = LoopModelAdapter(
+            num_layers=self.config.num_hidden_layers,
+            start_layer=self.start_layer,
+            end_layer=self.end_layer,
+            is_first_rank=self.pp_group.is_first_rank,
+            is_last_rank=self.pp_group.is_last_rank,
+            is_prefill=forward_batch.forward_mode.is_prefill(),
+            is_mixed=forward_batch.forward_mode.is_mixed(),
+            initial_state=lambda: run_prefix(initial_state()),
+            run_layer=run_layer,
+            finalize=finalize,
+        )
+        return _loop_plugin.run(loop_config, adapter, forward_batch)
+
+    def _forward_standard(
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,

@@ -153,6 +153,17 @@ class Model(msgspec.Struct):
         "A dictionary in JSON string format used to override default model configurations.",
     ] = "{}"
 
+    loop_config: A[
+        str,
+        Arg(
+            help=(
+                "Training-free loop plugin configuration as a JSON object. "
+                'Example: \'{"start":15,"end":19,"k":6,"strategy":'
+                '"block_anchored","anchor_beta":0.5}\'.'
+            )
+        ),
+    ] = "{}"
+
     # -------------------------------------------------------------------------
     # Quantization and data type
     # -------------------------------------------------------------------------

@@ -27,10 +27,16 @@ from sglang.srt.model_loader.weight_utils import (
     default_weight_loader,
     maybe_remap_kv_scale_name,
 )
+from sglang.srt.models.looped_transformer import (
+    LoopConfig,
+    LoopModelAdapter,
+    LoopState,
+    TrainingFreeLoopPlugin,
+)
 from sglang.srt.models.qwen2 import Qwen2MLP as Qwen3MLP
 from sglang.srt.models.qwen2 import Qwen2Model
 from sglang.srt.models.utils import apply_qk_norm
-from sglang.srt.runtime_context import get_exec, get_parallel, get_stream
+from sglang.srt.runtime_context import get_exec, get_model, get_parallel, get_stream
 from sglang.srt.utils import add_prefix, get_bool_env_var, is_cuda, is_hip, is_npu
 
 Qwen3Config = None
@@ -40,6 +46,7 @@ _is_cuda = is_cuda()
 _is_hip = is_hip()
 _is_npu = is_npu()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
+_loop_plugin = TrainingFreeLoopPlugin()
 
 _has_fused_qk_norm_mrope = False
 if _use_aiter:
@@ -272,9 +279,12 @@ class Qwen3Attention(nn.Module):
             hidden_states = hidden_states.bfloat16()
 
         save_kv_cache = True
+        loop_disable_kv_cache = getattr(forward_batch, "_loop_disable_kv_cache", False)
         use_aiter_fused = (
             self.use_fused_qk_norm_mrope
             and forward_batch.forward_mode.is_decode()
+            and not loop_disable_kv_cache
+            and not getattr(forward_batch, "_loop_decode_full", False)
             and get_exec().deterministic.rl_on_policy_target is None
         )
 
@@ -299,7 +309,13 @@ class Qwen3Attention(nn.Module):
             q = q.to(torch.bfloat16)
             k = k.to(torch.bfloat16)
 
-        attn_output = self.attn(q, k, v, forward_batch, save_kv_cache=save_kv_cache)
+        attn_output = self.attn(
+            q,
+            k,
+            v,
+            forward_batch,
+            save_kv_cache=save_kv_cache and not loop_disable_kv_cache,
+        )
         output, _ = self.o_proj(attn_output)
         return output
 
@@ -444,6 +460,94 @@ class Qwen3Model(Qwen2Model):
             decoder_layer_type=Qwen3DecoderLayer,
             alt_stream=alt_stream,
         )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: ForwardBatch,
+        input_embeds: torch.Tensor = None,
+        pp_proxy_tensors: Optional[PPProxyTensors] = None,
+    ):
+        """Run the optional first-stage training-free loop wrapper."""
+
+        model_args = get_model()
+        loop_config = LoopConfig.from_json(model_args.loop_config)
+
+        # First stage is prefill-only. Decode and mixed batches retain the
+        # ordinary path until decode cache snapshot/restore is implemented.
+        if (
+            loop_config is None
+            or loop_config.k <= 1
+            or forward_batch.forward_mode.is_mixed()
+            or (
+                not forward_batch.forward_mode.is_prefill()
+                and loop_config.decode_mode != "full"
+            )
+        ):
+            return super().forward(
+                input_ids,
+                positions,
+                forward_batch,
+                input_embeds,
+                pp_proxy_tensors,
+            )
+
+        def initial_state() -> LoopState:
+            if self.pp_group.is_first_rank:
+                hidden_states = (
+                    self.embed_tokens(input_ids)
+                    if input_embeds is None
+                    else input_embeds
+                )
+                return LoopState(hidden_states, None)
+            assert pp_proxy_tensors is not None
+            return LoopState(
+                pp_proxy_tensors["hidden_states"], pp_proxy_tensors["residual"]
+            )
+
+        def run_layer(layer_id: int, state: LoopState) -> LoopState:
+            out_hidden, out_residual = self.layers[layer_id](
+                positions,
+                state.hidden_states,
+                forward_batch,
+                state.residual,
+            )
+            return LoopState(out_hidden, out_residual)
+
+        def run_prefix(state: LoopState) -> LoopState:
+            for layer_id in range(self.start_layer, loop_config.start):
+                state = run_layer(layer_id, state)
+            return state
+
+        def finalize(state: LoopState):
+            for layer_id in range(loop_config.end, self.end_layer):
+                state = run_layer(layer_id, state)
+            hidden_states, residual = state.hidden_states, state.residual
+            if not self.pp_group.is_last_rank:
+                return PPProxyTensors(
+                    {"hidden_states": hidden_states, "residual": residual}
+                )
+            if hidden_states.shape[0] != 0:
+                if residual is None:
+                    hidden_states = self.norm(hidden_states)
+                else:
+                    hidden_states, _ = self.norm(hidden_states, residual)
+            return hidden_states
+
+        adapter = LoopModelAdapter(
+            num_layers=self.config.num_hidden_layers,
+            start_layer=self.start_layer,
+            end_layer=self.end_layer,
+            is_first_rank=self.pp_group.is_first_rank,
+            is_last_rank=self.pp_group.is_last_rank,
+            is_prefill=forward_batch.forward_mode.is_prefill(),
+            is_mixed=forward_batch.forward_mode.is_mixed(),
+            initial_state=lambda: run_prefix(initial_state()),
+            run_layer=run_layer,
+            finalize=finalize,
+        )
+        return _loop_plugin.run(loop_config, adapter, forward_batch)
 
 
 class Qwen3ForCausalLM(nn.Module):
