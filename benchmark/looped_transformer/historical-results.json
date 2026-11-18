@@ -1,0 +1,710 @@
+{
+  "schema_version": 1,
+  "numerical_precision": "Values copied at the printed precision (up to 8 decimal places); raw predictions and exact historical environment/model/dataset revisions were not archived.",
+  "records": [
+    {
+      "experiment": "qwen3-4b-smoke100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "arc_easy/acc": {
+          "baseline": 0.74,
+          "loop": 0.75,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "arc_easy/acc_norm": {
+          "baseline": 0.77,
+          "loop": 0.8,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "hellaswag/acc": {
+          "baseline": 0.52,
+          "loop": 0.52,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "hellaswag/acc_norm": {
+          "baseline": 0.71,
+          "loop": 0.7,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "openbookqa/acc": {
+          "baseline": 0.31,
+          "loop": 0.32,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "openbookqa/acc_norm": {
+          "baseline": 0.4,
+          "loop": 0.38,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": []
+    },
+    {
+      "experiment": "qwen3-4b-smoke100",
+      "backend": "paper-hf",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "arc_easy/acc": {
+          "baseline": 0.74,
+          "loop": 0.76,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "hellaswag/acc": {
+          "baseline": 0.51,
+          "loop": 0.52,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "openbookqa/acc": {
+          "baseline": 0.31,
+          "loop": 0.32,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": [
+        "Archived author patch and its historical SHA256 are unavailable."
+      ]
+    },
+    {
+      "experiment": "qwen3-4b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "arc_challenge/acc": {
+          "baseline": 0.47,
+          "loop": 0.48,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "arc_easy/acc_norm": {
+          "baseline": 0.77,
+          "loop": 0.8,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "hellaswag/acc_norm": {
+          "baseline": 0.71,
+          "loop": 0.7,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "openbookqa/acc": {
+          "baseline": 0.31,
+          "loop": 0.33,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": [
+        "Only these four suite100 metrics survived in the design journal. Do not substitute smoke100 numbers for the remaining cells."
+      ]
+    },
+    {
+      "experiment": "qwen3-1p7b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.73,
+          "loop": 0.72,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.53,
+          "loop": 0.53,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc": {
+          "baseline": 0.77,
+          "loop": 0.77,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.78,
+          "loop": 0.77,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc": {
+          "baseline": 0.98,
+          "loop": 0.98,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.98,
+          "loop": 0.98,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "winogrande/acc": {
+          "baseline": 0.67,
+          "loop": 0.71,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": [
+        "Exact historical loop configuration is unavailable; loop replay fails until an explicit reconstructed override is supplied."
+      ]
+    },
+    {
+      "experiment": "qwen3-1p7b-suite100",
+      "backend": "paper-hf",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.74,
+          "loop": 0.72,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.53,
+          "loop": 0.51,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc": {
+          "baseline": 0.77,
+          "loop": 0.77,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.8,
+          "loop": 0.81,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc": {
+          "baseline": 0.98,
+          "loop": 0.98,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.97,
+          "loop": 0.98,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "winogrande/acc": {
+          "baseline": 0.69,
+          "loop": 0.66,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": [
+        "Exact loop configuration and archived author patch SHA256 are unavailable."
+      ]
+    },
+    {
+      "experiment": "qwen25-1p5b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.77,
+          "loop": 0.77,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.47,
+          "loop": 0.47,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc": {
+          "baseline": 0.77,
+          "loop": 0.79,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.77,
+          "loop": 0.77,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc": {
+          "baseline": 0.95,
+          "loop": 0.96,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.96,
+          "loop": 0.97,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        },
+        "winogrande/acc": {
+          "baseline": 0.72,
+          "loop": 0.71,
+          "baseline_stderr": null,
+          "loop_stderr": null
+        }
+      },
+      "notes": [
+        "Exact historical loop configuration is unavailable."
+      ]
+    },
+    {
+      "experiment": "qwen25-7b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.82,
+          "loop": 0.82,
+          "baseline_stderr": 0.03861229,
+          "loop_stderr": 0.03861229
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.69,
+          "loop": 0.68,
+          "baseline_stderr": 0.04648232,
+          "loop_stderr": 0.04688262
+        },
+        "piqa/acc": {
+          "baseline": 0.83,
+          "loop": 0.84,
+          "baseline_stderr": 0.03775252,
+          "loop_stderr": 0.03684529
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.84,
+          "loop": 0.86,
+          "baseline_stderr": 0.03684529,
+          "loop_stderr": 0.03487351
+        },
+        "sciq/acc": {
+          "baseline": 0.97,
+          "loop": 0.98,
+          "baseline_stderr": 0.01714466,
+          "loop_stderr": 0.01407053
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.99,
+          "loop": 1,
+          "baseline_stderr": 0.01,
+          "loop_stderr": 0
+        },
+        "winogrande/acc": {
+          "baseline": 0.71,
+          "loop": 0.72,
+          "baseline_stderr": 0.0456048,
+          "loop_stderr": 0.04512609
+        }
+      },
+      "notes": []
+    },
+    {
+      "experiment": "qwen3-8b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.76,
+          "loop": 0.84,
+          "baseline_stderr": 0.04292347,
+          "loop_stderr": 0.03684529
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.65,
+          "loop": 0.68,
+          "baseline_stderr": 0.04793725,
+          "loop_stderr": 0.04688262
+        },
+        "piqa/acc": {
+          "baseline": 0.82,
+          "loop": 0.81,
+          "baseline_stderr": 0.03861229,
+          "loop_stderr": 0.03942772
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.83,
+          "loop": 0.84,
+          "baseline_stderr": 0.03775252,
+          "loop_stderr": 0.03684529
+        },
+        "sciq/acc": {
+          "baseline": 0.99,
+          "loop": 0.99,
+          "baseline_stderr": 0.01,
+          "loop_stderr": 0.01
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.99,
+          "loop": 0.99,
+          "baseline_stderr": 0.01,
+          "loop_stderr": 0.01
+        },
+        "winogrande/acc": {
+          "baseline": 0.78,
+          "loop": 0.79,
+          "baseline_stderr": 0.04163332,
+          "loop_stderr": 0.04093602
+        }
+      },
+      "notes": []
+    },
+    {
+      "experiment": "llama31-8b-suite100",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "commonsense_qa/acc": {
+          "baseline": 0.76,
+          "loop": 0.75,
+          "baseline_stderr": 0.04292347,
+          "loop_stderr": 0.04351941
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.47,
+          "loop": 0.43,
+          "baseline_stderr": 0.05016136,
+          "loop_stderr": 0.04975699
+        },
+        "piqa/acc": {
+          "baseline": 0.78,
+          "loop": 0.78,
+          "baseline_stderr": 0.04163332,
+          "loop_stderr": 0.04163332
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.82,
+          "loop": 0.81,
+          "baseline_stderr": 0.03861229,
+          "loop_stderr": 0.03942772
+        },
+        "sciq/acc": {
+          "baseline": 0.98,
+          "loop": 0.99,
+          "baseline_stderr": 0.01407053,
+          "loop_stderr": 0.01
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.97,
+          "loop": 0.98,
+          "baseline_stderr": 0.01714466,
+          "loop_stderr": 0.01407053
+        },
+        "winogrande/acc": {
+          "baseline": 0.7,
+          "loop": 0.7,
+          "baseline_stderr": 0.04605662,
+          "loop_stderr": 0.04605662
+        }
+      },
+      "notes": []
+    },
+    {
+      "experiment": "qwen3-8b-suitefull",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "arc_challenge/acc": {
+          "baseline": 0.55546075,
+          "loop": 0.56740614,
+          "baseline_stderr": 0.01452123,
+          "loop_stderr": 0.01447801
+        },
+        "arc_challenge/acc_norm": {
+          "baseline": 0.56484642,
+          "loop": 0.57764505,
+          "baseline_stderr": 0.01448799,
+          "loop_stderr": 0.01443414
+        },
+        "arc_easy/acc": {
+          "baseline": 0.83417508,
+          "loop": 0.83838384,
+          "baseline_stderr": 0.00763171,
+          "loop_stderr": 0.00755322
+        },
+        "arc_easy/acc_norm": {
+          "baseline": 0.80765993,
+          "loop": 0.81691919,
+          "baseline_stderr": 0.00808756,
+          "loop_stderr": 0.00793559
+        },
+        "commonsense_qa/acc": {
+          "baseline": 0.78542179,
+          "loop": 0.78787879,
+          "baseline_stderr": 0.01175342,
+          "loop_stderr": 0.0117042
+        },
+        "hellaswag/acc": {
+          "baseline": 0.57179845,
+          "loop": 0.57657837,
+          "baseline_stderr": 0.00493807,
+          "loop_stderr": 0.00493091
+        },
+        "hellaswag/acc_norm": {
+          "baseline": 0.74875523,
+          "loop": 0.75512846,
+          "baseline_stderr": 0.00432843,
+          "loop_stderr": 0.00429132
+        },
+        "lambada_openai/acc": {
+          "baseline": 0.65204735,
+          "loop": 0.64913643,
+          "baseline_stderr": 0.00663608,
+          "loop_stderr": 0.00664889
+        },
+        "lambada_openai/perplexity": {
+          "baseline": 4.59398247,
+          "loop": 4.56964915,
+          "baseline_stderr": 0.13869483,
+          "loop_stderr": 0.13856871
+        },
+        "mmlu_abstract_algebra/acc": {
+          "baseline": 0.58,
+          "loop": 0.59,
+          "baseline_stderr": 0.0496045,
+          "loop_stderr": 0.04943111
+        },
+        "mmlu_college_mathematics/acc": {
+          "baseline": 0.58,
+          "loop": 0.61,
+          "baseline_stderr": 0.0496045,
+          "loop_stderr": 0.04902071
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.6984127,
+          "loop": 0.71428571,
+          "baseline_stderr": 0.02363698,
+          "loop_stderr": 0.02326651
+        },
+        "mmlu_formal_logic/acc": {
+          "baseline": 0.61111111,
+          "loop": 0.62698413,
+          "baseline_stderr": 0.04360315,
+          "loop_stderr": 0.04325506
+        },
+        "mmlu_high_school_mathematics/acc": {
+          "baseline": 0.51111111,
+          "loop": 0.51111111,
+          "baseline_stderr": 0.03047801,
+          "loop_stderr": 0.03047801
+        },
+        "mmlu_high_school_physics/acc": {
+          "baseline": 0.70198675,
+          "loop": 0.70198675,
+          "baseline_stderr": 0.03734536,
+          "loop_stderr": 0.03734536
+        },
+        "openbookqa/acc": {
+          "baseline": 0.312,
+          "loop": 0.318,
+          "baseline_stderr": 0.0207406,
+          "loop_stderr": 0.02084757
+        },
+        "openbookqa/acc_norm": {
+          "baseline": 0.422,
+          "loop": 0.424,
+          "baseline_stderr": 0.02210904,
+          "loop_stderr": 0.02212299
+        },
+        "piqa/acc": {
+          "baseline": 0.76659412,
+          "loop": 0.76605005,
+          "baseline_stderr": 0.00986925,
+          "loop_stderr": 0.00987724
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.77638738,
+          "loop": 0.77801959,
+          "baseline_stderr": 0.00972149,
+          "loop_stderr": 0.00969612
+        },
+        "sciq/acc": {
+          "baseline": 0.967,
+          "loop": 0.966,
+          "baseline_stderr": 0.00565181,
+          "loop_stderr": 0.00573384
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.958,
+          "loop": 0.962,
+          "baseline_stderr": 0.00634636,
+          "loop_stderr": 0.00604918
+        },
+        "truthfulqa_mc1/acc": {
+          "baseline": 0.36597307,
+          "loop": 0.36597307,
+          "baseline_stderr": 0.01686294,
+          "loop_stderr": 0.01686294
+        },
+        "winogrande/acc": {
+          "baseline": 0.67561168,
+          "loop": 0.68745067,
+          "baseline_stderr": 0.01315723,
+          "loop_stderr": 0.01302756
+        }
+      },
+      "notes": []
+    },
+    {
+      "experiment": "llama31-8b-suitefull",
+      "backend": "sglang",
+      "evidence": "transcribed from recorded command output; original result JSON is not bundled",
+      "metrics": {
+        "arc_challenge/acc": {
+          "baseline": 0.53924915,
+          "loop": 0.54522184,
+          "baseline_stderr": 0.0145663,
+          "loop_stderr": 0.01455151
+        },
+        "arc_challenge/acc_norm": {
+          "baseline": 0.55716724,
+          "loop": 0.56228669,
+          "baseline_stderr": 0.01451557,
+          "loop_stderr": 0.01449757
+        },
+        "arc_easy/acc": {
+          "baseline": 0.82323232,
+          "loop": 0.82786195,
+          "baseline_stderr": 0.00782764,
+          "loop_stderr": 0.00774614
+        },
+        "arc_easy/acc_norm": {
+          "baseline": 0.79755892,
+          "loop": 0.80555556,
+          "baseline_stderr": 0.00824516,
+          "loop_stderr": 0.00812108
+        },
+        "commonsense_qa/acc": {
+          "baseline": 0.76248976,
+          "loop": 0.76167076,
+          "baseline_stderr": 0.01218367,
+          "loop_stderr": 0.01219811
+        },
+        "hellaswag/acc": {
+          "baseline": 0.59759012,
+          "loop": 0.59858594,
+          "baseline_stderr": 0.00489381,
+          "loop_stderr": 0.00489183
+        },
+        "hellaswag/acc_norm": {
+          "baseline": 0.78968333,
+          "loop": 0.79047998,
+          "baseline_stderr": 0.00406701,
+          "loop_stderr": 0.00406134
+        },
+        "lambada_openai/acc": {
+          "baseline": 0.46516592,
+          "loop": 0.45934407,
+          "baseline_stderr": 0.00694905,
+          "loop_stderr": 0.00694291
+        },
+        "lambada_openai/perplexity": {
+          "baseline": 12.79514099,
+          "loop": 13.28141364,
+          "baseline_stderr": 0.41178592,
+          "loop_stderr": 0.42779661
+        },
+        "mmlu_abstract_algebra/acc": {
+          "baseline": 0.39,
+          "loop": 0.39,
+          "baseline_stderr": 0.04902071,
+          "loop_stderr": 0.04902071
+        },
+        "mmlu_college_mathematics/acc": {
+          "baseline": 0.32,
+          "loop": 0.33,
+          "baseline_stderr": 0.04688262,
+          "loop_stderr": 0.04725816
+        },
+        "mmlu_elementary_mathematics/acc": {
+          "baseline": 0.49206349,
+          "loop": 0.4973545,
+          "baseline_stderr": 0.02574807,
+          "loop_stderr": 0.02575095
+        },
+        "mmlu_formal_logic/acc": {
+          "baseline": 0.48412698,
+          "loop": 0.47619048,
+          "baseline_stderr": 0.04469882,
+          "loop_stderr": 0.04467063
+        },
+        "mmlu_high_school_mathematics/acc": {
+          "baseline": 0.41851852,
+          "loop": 0.42592593,
+          "baseline_stderr": 0.03007801,
+          "loop_stderr": 0.03014914
+        },
+        "mmlu_high_school_physics/acc": {
+          "baseline": 0.44370861,
+          "loop": 0.46357616,
+          "baseline_stderr": 0.04056528,
+          "loop_stderr": 0.04071636
+        },
+        "openbookqa/acc": {
+          "baseline": 0.354,
+          "loop": 0.358,
+          "baseline_stderr": 0.02140758,
+          "loop_stderr": 0.02146143
+        },
+        "openbookqa/acc_norm": {
+          "baseline": 0.46,
+          "loop": 0.464,
+          "baseline_stderr": 0.02231133,
+          "loop_stderr": 0.02232498
+        },
+        "piqa/acc": {
+          "baseline": 0.80359086,
+          "loop": 0.80195865,
+          "baseline_stderr": 0.00926923,
+          "loop_stderr": 0.00929821
+        },
+        "piqa/acc_norm": {
+          "baseline": 0.81284004,
+          "loop": 0.81338411,
+          "baseline_stderr": 0.00910027,
+          "loop_stderr": 0.00909008
+        },
+        "sciq/acc": {
+          "baseline": 0.974,
+          "loop": 0.973,
+          "baseline_stderr": 0.00503481,
+          "loop_stderr": 0.00512809
+        },
+        "sciq/acc_norm": {
+          "baseline": 0.955,
+          "loop": 0.956,
+          "baseline_stderr": 0.00655881,
+          "loop_stderr": 0.00648892
+        },
+        "truthfulqa_mc1/acc": {
+          "baseline": 0.37943696,
+          "loop": 0.38066095,
+          "baseline_stderr": 0.01698704,
+          "loop_stderr": 0.01699763
+        },
+        "winogrande/acc": {
+          "baseline": 0.70639305,
+          "loop": 0.70244672,
+          "baseline_stderr": 0.0127994,
+          "loop_stderr": 0.01284909
+        }
+      },
+      "notes": []
+    }
+  ]
+}

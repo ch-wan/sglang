@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "implementation_commit": "2f6ceec8dfc8ab5804d5b81ff24c8b8ec65e9e74",
+  "historical_environment": "not archived; do not infer exact historical dependency or model revisions",
+  "evaluation": {
+    "num_fewshot": 0,
+    "batch_size": 8,
+    "client_max_length": 2048,
+    "seeds": [
+      0,
+      1234,
+      1234,
+      1234
+    ],
+    "apply_chat_template": false,
+    "tokenized_requests": false
+  },
+  "suites": {
+    "smoke3": [
+      "arc_easy",
+      "hellaswag",
+      "openbookqa"
+    ],
+    "extended5": [
+      "piqa",
+      "winogrande",
+      "sciq",
+      "commonsense_qa",
+      "mmlu_elementary_mathematics"
+    ],
+    "suite16": [
+      "arc_easy",
+      "arc_challenge",
+      "hellaswag",
+      "piqa",
+      "winogrande",
+      "lambada_openai",
+      "sciq",
+      "openbookqa",
+      "commonsense_qa",
+      "truthfulqa_mc1",
+      "mmlu_elementary_mathematics",
+      "mmlu_high_school_mathematics",
+      "mmlu_high_school_physics",
+      "mmlu_college_mathematics",
+      "mmlu_formal_logic",
+      "mmlu_abstract_algebra"
+    ]
+  },
+  "experiments": [
+    {
+      "id": "qwen3-4b-smoke100",
+      "model": "Qwen/Qwen3-4B-Base",
+      "suite": "smoke3",
+      "limit": 100,
+      "loop_config": {
+        "start": 15,
+        "end": 19,
+        "k": 6,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "bypass",
+        "cache_strategy": "first"
+      },
+      "provenance": "recorded-recipe"
+    },
+    {
+      "id": "qwen3-4b-suite100",
+      "model": "Qwen/Qwen3-4B-Base",
+      "suite": "suite16",
+      "limit": 100,
+      "loop_config": {
+        "start": 15,
+        "end": 19,
+        "k": 6,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "bypass",
+        "cache_strategy": "first"
+      },
+      "provenance": "recorded-recipe"
+    },
+    {
+      "id": "qwen3-1p7b-suite100",
+      "model": "Qwen/Qwen3-1.7B-Base",
+      "suite": "extended5",
+      "limit": 100,
+      "loop_config": null,
+      "provenance": "historical-loop-config-missing"
+    },
+    {
+      "id": "qwen25-1p5b-suite100",
+      "model": "Qwen/Qwen2.5-1.5B-Instruct",
+      "suite": "extended5",
+      "limit": 100,
+      "loop_config": null,
+      "provenance": "historical-loop-config-missing"
+    },
+    {
+      "id": "qwen25-7b-suite100",
+      "model": "Qwen/Qwen2.5-7B-Instruct",
+      "suite": "extended5",
+      "limit": 100,
+      "loop_config": {
+        "start": 12,
+        "end": 16,
+        "k": 4,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "full",
+        "cache_strategy": "first"
+      },
+      "provenance": "recorded-recipe"
+    },
+    {
+      "id": "qwen3-8b-suite100",
+      "model": "Qwen/Qwen3-8B",
+      "suite": "extended5",
+      "limit": 100,
+      "loop_config": {
+        "start": 12,
+        "end": 16,
+        "k": 4,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "full",
+        "cache_strategy": "first"
+      },
+      "provenance": "recorded-recipe"
+    },
+    {
+      "id": "llama31-8b-suite100",
+      "model": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+      "suite": "extended5",
+      "limit": 100,
+      "loop_config": {
+        "start": 12,
+        "end": 16,
+        "k": 4,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "full",
+        "cache_strategy": "first"
+      },
+      "provenance": "recorded-recipe"
+    },
+    {
+      "id": "qwen3-8b-suitefull",
+      "model": "Qwen/Qwen3-8B",
+      "suite": "suite16",
+      "limit": null,
+      "loop_config": {
+        "start": 15,
+        "end": 19,
+        "k": 6,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "bypass",
+        "cache_strategy": "first"
+      },
+      "provenance": "readme-recipe-transfer"
+    },
+    {
+      "id": "llama31-8b-suitefull",
+      "model": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+      "suite": "suite16",
+      "limit": null,
+      "loop_config": {
+        "start": 14,
+        "end": 18,
+        "k": 6,
+        "mode": "block",
+        "strategy": "block_anchored",
+        "anchor_beta": 0.5,
+        "decode_mode": "bypass",
+        "cache_strategy": "first"
+      },
+      "provenance": "independently-selected-window"
+    }
+  ]
+}

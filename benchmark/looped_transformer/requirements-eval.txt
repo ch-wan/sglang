@@ -1,0 +1,4 @@
+lm-eval[api]==0.4.11
+huggingface-hub>=0.34,<2
+pytest>=8,<10
+pre-commit>=4,<5

@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "models": {
+    "NousResearch/Meta-Llama-3.1-8B-Instruct": "d10aef7999a2b5ba950ab3974312feeedbfe0b77",
+    "Qwen/Qwen2.5-1.5B-Instruct": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "Qwen/Qwen2.5-7B-Instruct": "a09a35458c702b33eeacc393d103063234e8bc28",
+    "Qwen/Qwen3-1.7B-Base": "ea980cb0a6c2ae4b936e82123acc929f1cec04c1",
+    "Qwen/Qwen3-4B-Base": "906bfd4b4dc7f14ee4320094d8b41684abff8539",
+    "Qwen/Qwen3-8B": "b968826d9c46dd6066d109eabc6255188de91218"
+  },
+  "tasks": {
+    "arc_challenge": {
+      "dataset": "allenai/ai2_arc",
+      "name": "ARC-Challenge",
+      "revision": "210d026faf9955653af8916fad021475a3f00453",
+      "kwargs": {},
+      "task_yaml_sha256": "682621c26ae24b1065a2d732460a55a8ef2b9f2544574431666c9309a9efd7bd"
+    },
+    "arc_easy": {
+      "dataset": "allenai/ai2_arc",
+      "name": "ARC-Easy",
+      "revision": "210d026faf9955653af8916fad021475a3f00453",
+      "kwargs": {},
+      "task_yaml_sha256": "96da1d9efe1df88659481cedc13985cb347dc068554a2eae561303fa39bfab3f"
+    },
+    "commonsense_qa": {
+      "dataset": "tau/commonsense_qa",
+      "name": null,
+      "revision": "94630fe30dad47192a8546eb75f094926d47e155",
+      "kwargs": {},
+      "task_yaml_sha256": "61699aec6e95c719576ba0a74c05ac4b46c01afa070f902d5c4d7732a86a559b"
+    },
+    "hellaswag": {
+      "dataset": "Rowan/hellaswag",
+      "name": null,
+      "revision": "218ec52e09a7e7462a5400043bb9a69a41d06b76",
+      "kwargs": {},
+      "task_yaml_sha256": "e9ef8ac3fed02bf283777d946ae76cbf906152e9c92533c9794e5a9dad78d1cf"
+    },
+    "lambada_openai": {
+      "dataset": "EleutherAI/lambada_openai",
+      "name": "default",
+      "revision": "900124bf3b8235c6daf21033af9948b3f07346c4",
+      "kwargs": {},
+      "task_yaml_sha256": "96dee2fe378666b6b5411958a25ad5c83f5b43eb6b3c830f4b0fd485f9adb6a5"
+    },
+    "mmlu_abstract_algebra": {
+      "dataset": "cais/mmlu",
+      "name": "abstract_algebra",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "f026cc8918a0a4a422af4286e22889de6f423483671975fdd5429c96c0d0d9ef"
+    },
+    "mmlu_college_mathematics": {
+      "dataset": "cais/mmlu",
+      "name": "college_mathematics",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "f5ee2d5cab36fdcee9678fdfda31c1d6dafd173674692311e6a3000511d7de14"
+    },
+    "mmlu_elementary_mathematics": {
+      "dataset": "cais/mmlu",
+      "name": "elementary_mathematics",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "90105e3ee53a869f5bb23361fe01419e9cec54bfbf1cd82b2d3f3e5f8a335c4a"
+    },
+    "mmlu_formal_logic": {
+      "dataset": "cais/mmlu",
+      "name": "formal_logic",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "31e3c8ec51bbbe8ba7842948b28844b0f12de8b709059f1647bda39f860ab86e"
+    },
+    "mmlu_high_school_mathematics": {
+      "dataset": "cais/mmlu",
+      "name": "high_school_mathematics",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "7cdaaad0ba299d5679b344ec8cd4775dd81ebff3918041157a7a980708f31dc2"
+    },
+    "mmlu_high_school_physics": {
+      "dataset": "cais/mmlu",
+      "name": "high_school_physics",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "kwargs": {},
+      "task_yaml_sha256": "8ee33988717ad1c9cc29f51841ffdd8ba2ce57e80f93fc6f3d570a48c6683934"
+    },
+    "openbookqa": {
+      "dataset": "allenai/openbookqa",
+      "name": "main",
+      "revision": "388097ea7776314e93a529163e0fea805b8a6454",
+      "kwargs": {},
+      "task_yaml_sha256": "13ac2df0c7d5f73e5a12dccc704048ca28b8123980fa0b8258eef937284f4735"
+    },
+    "piqa": {
+      "dataset": "baber/piqa",
+      "name": null,
+      "revision": "142f6d7367fd9877f0fb3b5734ea6a545f54cdd1",
+      "kwargs": {},
+      "task_yaml_sha256": "e874f7956ccac325b888d4a5dc600bad867b79fba2bd358fe8761ab8263270fb"
+    },
+    "sciq": {
+      "dataset": "allenai/sciq",
+      "name": null,
+      "revision": "2c94ad3e1aafab77146f384e23536f97a4849815",
+      "kwargs": {},
+      "task_yaml_sha256": "d0409dc9466fed64e908c45111489a73c4a004d6af9a968dc5d85228823696de"
+    },
+    "truthfulqa_mc1": {
+      "dataset": "truthfulqa/truthful_qa",
+      "name": "multiple_choice",
+      "revision": "741b8276f2d1982aa3d5b832d3ee81ed3b896490",
+      "kwargs": {},
+      "task_yaml_sha256": "16138460b4bde2e017424d168d268a28a64818a549c2d6fb1c8f2e9cc50c36e5"
+    },
+    "winogrande": {
+      "dataset": "allenai/winogrande",
+      "name": "winogrande_xl",
+      "revision": "01e74176c63542e6b0bcb004dcdea22d94fb67b5",
+      "kwargs": {},
+      "task_yaml_sha256": "7a73c28f1c760f1f54b4185f21f8df5927c1fe7278a8520f38ee03cc7f40d9e7"
+    }
+  },
+  "resolved_on": "2026-11-17",
+  "historical_revisions_recovered": false
+}
